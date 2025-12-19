@@ -1,0 +1,22 @@
+{
+  "name": "livesync-hyperclay",
+  "version": "0.1.0",
+  "description": "Real-time HTML sync server - SSE endpoint + file watcher",
+  "main": "index.js",
+  "scripts": {
+    "release": "./scripts/release.sh"
+  },
+  "keywords": [
+    "livesync",
+    "hyperclay",
+    "hot-reload",
+    "sse",
+    "real-time",
+    "sync"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "chokidar": "^3.5.3"
+  }
+}
