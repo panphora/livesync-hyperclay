@@ -210,11 +210,50 @@ else
 fi
 
 echo ""
+echo "--- headHash Tests ---"
+echo ""
+
+# Test 10: Save with head content computes headHash
+echo -n "Test 10: Save with head computes headHash... "
+RESPONSE=$(curl -s -X POST "$BASE_URL/live-sync/save" \
+    -H "Content-Type: application/json" \
+    -d '{"file":"test","body":"<p>Updated</p>","head":"<title>Test</title>","sender":"test123"}')
+if echo "$RESPONSE" | grep -q '"success":true'; then
+    echo -e "${GREEN}PASS${NC}"
+    ((PASS++))
+else
+    echo -e "${RED}FAIL${NC} (expected success, got: $RESPONSE)"
+    ((FAIL++))
+fi
+
+# Test 11: headHash is included in SSE broadcast
+echo -n "Test 11: SSE includes headHash in messages... "
+# Connect to SSE, trigger a save, capture the message
+curl -s -N --max-time 3 "$BASE_URL/live-sync/stream?file=test" > /tmp/sse_output.txt 2>/dev/null &
+SSE_PID=$!
+sleep 0.5
+# Trigger a save with head content
+curl -s -X POST "$BASE_URL/live-sync/save" \
+    -H "Content-Type: application/json" \
+    -d '{"file":"test","body":"<p>SSE test</p>","head":"<title>SSE Test</title>","sender":"sse-test"}' > /dev/null
+sleep 1
+kill $SSE_PID 2>/dev/null || true
+wait $SSE_PID 2>/dev/null || true
+if grep -q '"headHash":' /tmp/sse_output.txt; then
+    echo -e "${GREEN}PASS${NC}"
+    ((PASS++))
+else
+    echo -e "${RED}FAIL${NC} (headHash not in SSE message)"
+    ((FAIL++))
+fi
+rm -f /tmp/sse_output.txt
+
+echo ""
 echo "--- Endpoint Tests ---"
 echo ""
 
-# Test 10: Stats endpoint
-echo -n "Test 10: Stats endpoint returns mode... "
+# Test 12: Stats endpoint
+echo -n "Test 12: Stats endpoint returns mode... "
 RESPONSE=$(curl -s "$BASE_URL/live-sync/stats")
 if echo "$RESPONSE" | grep -q '"mode"'; then
     echo -e "${GREEN}PASS${NC}"
@@ -224,8 +263,8 @@ else
     ((FAIL++))
 fi
 
-# Test 11: Debug endpoint
-echo -n "Test 11: Debug endpoint returns rooms... "
+# Test 13: Debug endpoint
+echo -n "Test 13: Debug endpoint returns rooms... "
 RESPONSE=$(curl -s "$BASE_URL/live-sync/debug")
 if echo "$RESPONSE" | grep -q '"rooms"'; then
     echo -e "${GREEN}PASS${NC}"
@@ -235,8 +274,8 @@ else
     ((FAIL++))
 fi
 
-# Test 12: SSE stream validation (path traversal)
-echo -n "Test 12: SSE rejects invalid file param... "
+# Test 14: SSE stream validation (path traversal)
+echo -n "Test 14: SSE rejects invalid file param... "
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/live-sync/stream?file=../test")
 if [ "$HTTP_CODE" = "400" ]; then
     echo -e "${GREEN}PASS${NC} (got 400)"
@@ -246,8 +285,8 @@ else
     ((FAIL++))
 fi
 
-# Test 13: SSE stream missing file
-echo -n "Test 13: SSE rejects missing file param... "
+# Test 15: SSE stream missing file
+echo -n "Test 15: SSE rejects missing file param... "
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/live-sync/stream")
 if [ "$HTTP_CODE" = "400" ]; then
     echo -e "${GREEN}PASS${NC} (got 400)"
