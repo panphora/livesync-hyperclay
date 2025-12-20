@@ -4,6 +4,7 @@
   "description": "Real-time HTML sync server - SSE endpoint + file watcher",
   "main": "index.js",
   "scripts": {
+    "test": "./test/test-server.sh",
     "release": "./scripts/release.sh"
   },
   "keywords": [
@@ -14,7 +15,7 @@
     "real-time",
     "sync"
   ],
-  "author": "",
+  "author": "David Miranda",
   "license": "MIT",
   "dependencies": {
     "chokidar": "^3.5.3"
