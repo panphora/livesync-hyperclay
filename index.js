@@ -377,9 +377,21 @@ function setupLiveSync(app, options = {}) {
     res.write(': connected\n\n');
   });
 
+  /**
+   * Compute headHash from head content
+   * @param {string} head - The <head> innerHTML content
+   * @returns {string} - 8-char hex hash
+   */
+  function computeHeadHash(head) {
+    if (typeof head !== 'string' || head.length === 0) {
+      return null;
+    }
+    return crypto.createHash('md5').update(head).digest('hex').slice(0, 8);
+  }
+
   // Save endpoint - write browser changes
   app.post(`${prefix}/save`, async (req, res) => {
-    const { file, body, sender, headHash } = req.body;
+    const { file, body, sender, head, headHash } = req.body;
 
     // Strict type validation
     if (typeof file !== 'string' || file.length === 0) {
@@ -391,6 +403,9 @@ function setupLiveSync(app, options = {}) {
     if (typeof sender !== 'string' || sender.length === 0) {
       return res.status(400).json({ error: 'sender must be a non-empty string' });
     }
+
+    // Compute headHash from head content if provided, otherwise use provided headHash
+    const computedHeadHash = head ? computeHeadHash(head) : validateHeadHash(headHash);
 
     // Rate limiting (10 saves/second per client)
     const rateCheck = checkRateLimit(sender);
@@ -470,10 +485,10 @@ function setupLiveSync(app, options = {}) {
         return res.status(503).json({ error: 'Too many active rooms' });
       }
 
-      // Accept headHash from client if provided and valid
-      const validatedHeadHash = validateHeadHash(headHash) || memoryState.get(file)?.headHash || null;
-      memoryState.set(file, { body, headHash: validatedHeadHash });
-      broadcast(file, body, validatedHeadHash, sender);
+      // Use computed headHash, fall back to existing state's headHash
+      const finalHeadHash = computedHeadHash || memoryState.get(file)?.headHash || null;
+      memoryState.set(file, { body, headHash: finalHeadHash });
+      broadcast(file, body, finalHeadHash, sender);
       console.log(`[LiveSync] Broadcast: ${file} (from: ${sender})`);
       res.json({ success: true });
     }
