@@ -17,6 +17,14 @@
   ],
   "author": "David Miranda",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/panphora/livesync-hyperclay.git"
+  },
+  "homepage": "https://github.com/panphora/livesync-hyperclay",
+  "bugs": {
+    "url": "https://github.com/panphora/livesync-hyperclay/issues"
+  },
   "dependencies": {
     "chokidar": "^3.5.3"
   }
