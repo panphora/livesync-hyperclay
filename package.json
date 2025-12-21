@@ -1,7 +1,7 @@
 {
   "name": "livesync-hyperclay",
-  "version": "0.3.0",
-  "description": "Real-time HTML sync server - SSE endpoint + file watcher",
+  "version": "0.4.0",
+  "description": "Stateless utility for managing SSE client connections - subscribe/unsubscribe/broadcast",
   "main": "index.js",
   "scripts": {
     "test": "./test/test-server.sh",
@@ -24,9 +24,6 @@
   "homepage": "https://github.com/panphora/livesync-hyperclay",
   "bugs": {
     "url": "https://github.com/panphora/livesync-hyperclay/issues"
-  },
-  "dependencies": {
-    "chokidar": "^3.5.3"
   },
   "devDependencies": {
     "express": "^5.2.1"
