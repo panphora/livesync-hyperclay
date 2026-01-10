@@ -106,7 +106,7 @@ test('broadcast sends to all subscribers', () => {
     liveSync.subscribe('broadcast-test', res1);
     liveSync.subscribe('broadcast-test', res2);
 
-    liveSync.broadcast('broadcast-test', { body: '<p>test</p>', headHash: 'abc123', sender: 'test-sender' });
+    liveSync.broadcast('broadcast-test', { html: '<html><body><p>test</p></body></html>', sender: 'test-sender' });
 
     assert(res1.messages.length === 1, 'res1 should have 1 message');
     assert(res2.messages.length === 1, 'res2 should have 1 message');
@@ -118,30 +118,30 @@ test('broadcast sends to all subscribers', () => {
 
 test('broadcast to non-existent room is no-op', () => {
     // Should not throw
-    liveSync.broadcast('nonexistent-room', { body: 'test', headHash: null, sender: 'test' });
+    liveSync.broadcast('nonexistent-room', { html: '<html></html>', sender: 'test' });
 });
 
-test('broadcast rejects non-string body', () => {
+test('broadcast rejects non-string html', () => {
     const res = mockRes();
-    liveSync.subscribe('body-test', res);
+    liveSync.subscribe('html-test', res);
 
     // Should not throw but should not send
-    liveSync.broadcast('body-test', { body: null, headHash: null, sender: 'test' });
-    liveSync.broadcast('body-test', { body: undefined, headHash: null, sender: 'test' });
-    liveSync.broadcast('body-test', { body: 123, headHash: null, sender: 'test' });
+    liveSync.broadcast('html-test', { html: null, sender: 'test' });
+    liveSync.broadcast('html-test', { html: undefined, sender: 'test' });
+    liveSync.broadcast('html-test', { html: 123, sender: 'test' });
 
-    assert(res.messages.length === 0, 'Should not send messages for non-string body');
+    assert(res.messages.length === 0, 'Should not send messages for non-string html');
 
-    liveSync.unsubscribe('body-test', res);
+    liveSync.unsubscribe('html-test', res);
 });
 
-test('broadcast allows empty string body', () => {
+test('broadcast allows empty string html', () => {
     const res = mockRes();
     liveSync.subscribe('empty-test', res);
 
-    liveSync.broadcast('empty-test', { body: '', headHash: null, sender: 'test' });
+    liveSync.broadcast('empty-test', { html: '', sender: 'test' });
 
-    assert(res.messages.length === 1, 'Should send message for empty string body');
+    assert(res.messages.length === 1, 'Should send message for empty string html');
 
     liveSync.unsubscribe('empty-test', res);
 });

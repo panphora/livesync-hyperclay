@@ -27,6 +27,7 @@ const liveSync = {
       clients.set(file, new Set());
     }
     clients.get(file).add(res);
+    console.log(`[LiveSync] Subscribed to "${file}", now ${clients.get(file).size} subscriber(s)`);
   },
 
   /**
@@ -36,7 +37,9 @@ const liveSync = {
    */
   unsubscribe(file, res) {
     clients.get(file)?.delete(res);
-    if (clients.get(file)?.size === 0) {
+    const remaining = clients.get(file)?.size || 0;
+    console.log(`[LiveSync] Unsubscribed from "${file}", ${remaining} subscriber(s) remaining`);
+    if (remaining === 0) {
       clients.delete(file);
     }
   },
@@ -44,31 +47,39 @@ const liveSync = {
   /**
    * Broadcast an update to all clients subscribed to a file
    * @param {string} file - Site identifier
-   * @param {Object} data - { body, headHash, sender }
-   * @param {string} data.body - Body innerHTML
-   * @param {string} data.headHash - SHA-256 hash of head (first 16 hex chars)
+   * @param {Object} data - { html, sender }
+   * @param {string} data.html - Full document HTML
    * @param {string} data.sender - Client ID or 'file-system'
    */
-  broadcast(file, { body, headHash, sender }) {
+  broadcast(file, { html, sender }) {
     const subscribers = clients.get(file);
-    if (!subscribers?.size) return;
+    console.log(`[LiveSync] Broadcasting to "${file}": ${subscribers?.size || 0} subscriber(s), sender=${sender}`);
 
-    // Never broadcast null/undefined body
-    if (typeof body !== 'string') {
-      console.error(`[LiveSync] Refusing to broadcast non-string body for ${file}`);
+    if (!subscribers?.size) {
+      console.log(`[LiveSync] No subscribers for "${file}", available rooms:`, Array.from(clients.keys()));
       return;
     }
 
-    const message = `data: ${JSON.stringify({ body, headHash, sender })}\n\n`;
+    if (typeof html !== 'string') {
+      console.error(`[LiveSync] Refusing to broadcast non-string html for ${file}`);
+      return;
+    }
+
+    const message = `data: ${JSON.stringify({ html, sender })}\n\n`;
     const dead = [];
+    let sent = 0;
 
     for (const res of subscribers) {
       try {
         res.write(message);
-      } catch {
+        sent++;
+      } catch (e) {
+        console.log(`[LiveSync] Failed to write to subscriber:`, e.message);
         dead.push(res);
       }
     }
+
+    console.log(`[LiveSync] Sent to ${sent}/${subscribers.size} subscribers`);
 
     // Clean up dead connections
     dead.forEach(res => subscribers.delete(res));
