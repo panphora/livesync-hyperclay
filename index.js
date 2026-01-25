@@ -17,6 +17,11 @@ const clients = new Map();
 // Structure: Map<username, Set<response>>
 const userClients = new Map();
 
+// Track recent browser saves to avoid duplicate "file changed" notifications
+// Structure: Map<filename, timestamp>
+const recentBrowserSaves = new Map();
+const BROWSER_SAVE_WINDOW_MS = 2000;
+
 /**
  * LiveSync utility object
  */
@@ -271,6 +276,33 @@ const liveSync = {
       connections: totalConnections,
       userConnections: totalUserConnections
     };
+  },
+
+  /**
+   * Mark a file as recently saved by a browser.
+   * Call after writing a file via browser save endpoint.
+   * @param {string} file - Site identifier (without .html)
+   */
+  markBrowserSave(file) {
+    recentBrowserSaves.set(file, Date.now());
+    setTimeout(() => {
+      const savedAt = recentBrowserSaves.get(file);
+      if (savedAt && Date.now() - savedAt >= BROWSER_SAVE_WINDOW_MS) {
+        recentBrowserSaves.delete(file);
+      }
+    }, BROWSER_SAVE_WINDOW_MS + 100);
+  },
+
+  /**
+   * Check if a file was recently saved by a browser.
+   * Use to skip "file changed on disk" notifications for browser-initiated saves.
+   * @param {string} file - Site identifier (without .html)
+   * @returns {boolean}
+   */
+  wasBrowserSave(file) {
+    const savedAt = recentBrowserSaves.get(file);
+    if (!savedAt) return false;
+    return Date.now() - savedAt < BROWSER_SAVE_WINDOW_MS;
   }
 };
 
