@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1] - 2026-01-31
+
+### Added
+- Browser save tracking to prevent duplicate notifications
+
+
+
 ## [0.7.0] - 2026-01-22
 
 ### Changed
