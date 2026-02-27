@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0] - 2026-02-26
+
+### Added
+- Broadcast methods for file rename, move, and delete events
+
+
+
 ## [0.7.1] - 2026-01-31
 
 ### Added
