@@ -169,7 +169,7 @@ const liveSync = {
    * @param {string} file - Site identifier that was saved
    * @param {Object} data - { content, checksum, modifiedAt }
    */
-  broadcastFileSaved(username, file, { content, checksum, modifiedAt }) {
+  broadcastFileSaved(username, file, { content, checksum, modifiedAt, nodeId }) {
     const subscribers = userClients.get(username);
 
     if (!subscribers?.size) {
@@ -186,7 +186,8 @@ const liveSync = {
       file,
       content,
       checksum,
-      modifiedAt
+      modifiedAt,
+      nodeId
     })}\n\n`;
 
     const dead = [];
@@ -208,6 +209,51 @@ const liveSync = {
 
     // Clean up dead connections
     dead.forEach(res => subscribers.delete(res));
+  },
+
+  broadcastFileRenamed(username, nodeId, oldName, newName) {
+    const subscribers = userClients.get(username);
+    if (!subscribers?.size) return;
+
+    const message = `data: ${JSON.stringify({ type: 'file-renamed', nodeId, oldName, newName })}\n\n`;
+    const dead = [];
+
+    for (const res of subscribers) {
+      try { res.write(message); } catch (e) { dead.push(res); }
+    }
+
+    if (dead.length) dead.forEach(res => subscribers.delete(res));
+    console.log(`[LiveSync] Sent file-renamed to user "${username}": ${oldName} → ${newName}`);
+  },
+
+  broadcastFileMoved(username, nodeId, file, fromPath, toPath) {
+    const subscribers = userClients.get(username);
+    if (!subscribers?.size) return;
+
+    const message = `data: ${JSON.stringify({ type: 'file-moved', nodeId, file, fromPath, toPath })}\n\n`;
+    const dead = [];
+
+    for (const res of subscribers) {
+      try { res.write(message); } catch (e) { dead.push(res); }
+    }
+
+    if (dead.length) dead.forEach(res => subscribers.delete(res));
+    console.log(`[LiveSync] Sent file-moved to user "${username}": ${fromPath} → ${toPath}`);
+  },
+
+  broadcastFileDeleted(username, nodeId, file) {
+    const subscribers = userClients.get(username);
+    if (!subscribers?.size) return;
+
+    const message = `data: ${JSON.stringify({ type: 'file-deleted', nodeId, file })}\n\n`;
+    const dead = [];
+
+    for (const res of subscribers) {
+      try { res.write(message); } catch (e) { dead.push(res); }
+    }
+
+    if (dead.length) dead.forEach(res => subscribers.delete(res));
+    console.log(`[LiveSync] Sent file-deleted to user "${username}": ${file}`);
   },
 
   /**

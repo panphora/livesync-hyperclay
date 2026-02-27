@@ -147,6 +147,105 @@ test('broadcast allows empty string html', () => {
 });
 
 console.log('');
+console.log('--- User Broadcast Tests ---');
+console.log('');
+
+function parseSSE(raw) {
+    return JSON.parse(raw.replace('data: ', '').trim());
+}
+
+test('broadcastFileSaved includes nodeId', () => {
+    const res = mockRes();
+    liveSync.subscribeUser('test-user', res);
+
+    liveSync.broadcastFileSaved('test-user', 'my-site', {
+        content: '<html></html>',
+        checksum: 'abc123',
+        modifiedAt: '2024-01-01T00:00:00Z',
+        nodeId: 42
+    });
+
+    assert(res.messages.length === 1, 'Should send 1 message');
+    const data = parseSSE(res.messages[0]);
+    assert(data.type === 'file-saved', 'type should be file-saved');
+    assert(data.nodeId === 42, 'nodeId should be 42');
+    assert(data.file === 'my-site', 'file should be my-site');
+    assert(data.checksum === 'abc123', 'checksum should match');
+
+    liveSync.unsubscribeUser('test-user', res);
+});
+
+test('broadcastFileRenamed sends correct shape', () => {
+    const res = mockRes();
+    liveSync.subscribeUser('test-user', res);
+
+    liveSync.broadcastFileRenamed('test-user', 99, 'old-name', 'new-name');
+
+    assert(res.messages.length === 1, 'Should send 1 message');
+    const data = parseSSE(res.messages[0]);
+    assert(data.type === 'file-renamed', 'type should be file-renamed');
+    assert(data.nodeId === 99, 'nodeId should be 99');
+    assert(data.oldName === 'old-name', 'oldName should match');
+    assert(data.newName === 'new-name', 'newName should match');
+
+    liveSync.unsubscribeUser('test-user', res);
+});
+
+test('broadcastFileMoved sends correct shape', () => {
+    const res = mockRes();
+    liveSync.subscribeUser('test-user', res);
+
+    liveSync.broadcastFileMoved('test-user', 55, 'my-site', 'my-site.html', 'blog/my-site.html');
+
+    assert(res.messages.length === 1, 'Should send 1 message');
+    const data = parseSSE(res.messages[0]);
+    assert(data.type === 'file-moved', 'type should be file-moved');
+    assert(data.nodeId === 55, 'nodeId should be 55');
+    assert(data.file === 'my-site', 'file should be my-site');
+    assert(data.fromPath === 'my-site.html', 'fromPath should match');
+    assert(data.toPath === 'blog/my-site.html', 'toPath should match');
+
+    liveSync.unsubscribeUser('test-user', res);
+});
+
+test('broadcastFileDeleted sends correct shape', () => {
+    const res = mockRes();
+    liveSync.subscribeUser('test-user', res);
+
+    liveSync.broadcastFileDeleted('test-user', 77, 'blog/my-site');
+
+    assert(res.messages.length === 1, 'Should send 1 message');
+    const data = parseSSE(res.messages[0]);
+    assert(data.type === 'file-deleted', 'type should be file-deleted');
+    assert(data.nodeId === 77, 'nodeId should be 77');
+    assert(data.file === 'blog/my-site', 'file should match');
+
+    liveSync.unsubscribeUser('test-user', res);
+});
+
+test('new broadcast methods are no-ops with no subscribers', () => {
+    // Should not throw
+    liveSync.broadcastFileRenamed('nobody', 1, 'a', 'b');
+    liveSync.broadcastFileMoved('nobody', 1, 'a', 'a.html', 'b.html');
+    liveSync.broadcastFileDeleted('nobody', 1, 'a');
+});
+
+test('new broadcast methods clean up dead connections', () => {
+    const dead = { write() { throw new Error('dead'); } };
+    const alive = mockRes();
+    liveSync.subscribeUser('cleanup-test', dead);
+    liveSync.subscribeUser('cleanup-test', alive);
+
+    liveSync.broadcastFileRenamed('cleanup-test', 1, 'a', 'b');
+
+    assert(alive.messages.length === 1, 'Alive connection should receive message');
+    const stats = liveSync.getStats();
+    assert(stats.userConnections === 1, 'Dead connection should be removed');
+
+    liveSync.unsubscribeUser('cleanup-test', alive);
+});
+
+console.log('');
 console.log('========================================');
 console.log('Results: ' + pass + ' passed, ' + fail + ' failed');
 console.log('========================================');
