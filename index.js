@@ -169,27 +169,58 @@ const liveSync = {
    * @param {string} file - Site identifier that was saved
    * @param {Object} data - { content, checksum, modifiedAt }
    */
-  broadcastFileSaved(username, file, { content, checksum, modifiedAt, nodeId }) {
+  /**
+   * Broadcast a node-saved event to a user's sync engine connections.
+   *
+   * For sites: includes inline content so receiving clients can write to disk directly.
+   * For uploads: metadata only — receiving clients fetch content via GET /sync/nodes/:id/content.
+   * For folders: metadata only (folders have no content).
+   *
+   * Also fires for create events (the receiving client distinguishes create vs update
+   * by checking its own nodeMap for the nodeId).
+   *
+   * @param {string} username - User identifier
+   * @param {Object} data
+   * @param {number} data.nodeId - Node id
+   * @param {string} data.nodeType - 'site' | 'upload' | 'folder'
+   * @param {string} data.name - Node name (filename or folder name)
+   * @param {string} data.path - Full path to the node (e.g. "projects/index.html")
+   * @param {string} [data.checksum] - Content hash (sites + uploads only)
+   * @param {string} [data.modifiedAt] - ISO timestamp of last modification
+   * @param {string} [data.content] - Inline content — REQUIRED for sites, ABSENT for uploads + folders
+   * @param {number} [data.size] - File size in bytes (uploads only)
+   */
+  broadcastNodeSaved(username, { nodeId, nodeType, name, path, checksum, modifiedAt, content, size }) {
     const subscribers = userClients.get(username);
+    if (!subscribers?.size) return;
 
-    if (!subscribers?.size) {
-      return; // No user subscribers, that's fine
-    }
-
-    if (typeof content !== 'string') {
-      console.error(`[LiveSync] Refusing to broadcast non-string content for user ${username}`);
+    // Validate: sites must include content; uploads/folders must NOT include content
+    if (nodeType === 'site' && typeof content !== 'string') {
+      console.error(`[LiveSync] Refusing to broadcast site node-saved without string content for user ${username}`);
       return;
     }
+    if (nodeType !== 'site' && content !== undefined) {
+      console.warn(`[LiveSync] Stripping content from ${nodeType} node-saved event (notification-only)`);
+    }
 
-    const message = `data: ${JSON.stringify({
-      type: 'file-saved',
-      file,
-      content,
+    const payload = {
+      type: 'node-saved',
+      nodeId,
+      nodeType,
+      name,
+      path,
       checksum,
-      modifiedAt,
-      nodeId
-    })}\n\n`;
+      modifiedAt
+    };
 
+    if (nodeType === 'site') {
+      payload.content = content;
+    }
+    if (nodeType === 'upload' && size !== undefined) {
+      payload.size = size;
+    }
+
+    const message = `data: ${JSON.stringify(payload)}\n\n`;
     const dead = [];
     let sent = 0;
 
@@ -198,62 +229,125 @@ const liveSync = {
         res.write(message);
         sent++;
       } catch (e) {
-        console.log(`[LiveSync] Failed to write file-saved to user subscriber:`, e.message);
+        console.log(`[LiveSync] Failed to write node-saved to user subscriber:`, e.message);
         dead.push(res);
       }
     }
 
     if (sent > 0) {
-      console.log(`[LiveSync] Sent file-saved to user "${username}": ${sent} connection(s), file=${file}`);
+      console.log(`[LiveSync] Sent node-saved (${nodeType}) to user "${username}": ${sent} connection(s), node=${nodeId} path=${path}`);
     }
 
-    // Clean up dead connections
     dead.forEach(res => subscribers.delete(res));
   },
 
-  broadcastFileRenamed(username, nodeId, oldName, newName) {
+  /**
+   * Broadcast a node-renamed event.
+   * For folder renames, the receiving client walks its own nodeMap descendants and
+   * rewrites their paths locally. There are NO per-descendant events on the wire.
+   *
+   * @param {string} username
+   * @param {Object} data
+   * @param {number} data.nodeId
+   * @param {string} data.nodeType - 'site' | 'upload' | 'folder'
+   * @param {string} data.oldName
+   * @param {string} data.newName
+   * @param {string} data.oldPath - Full old path (e.g. "projects/old.html")
+   * @param {string} data.newPath - Full new path (e.g. "projects/new.html")
+   */
+  broadcastNodeRenamed(username, { nodeId, nodeType, oldName, newName, oldPath, newPath }) {
     const subscribers = userClients.get(username);
     if (!subscribers?.size) return;
 
-    const message = `data: ${JSON.stringify({ type: 'file-renamed', nodeId, oldName, newName })}\n\n`;
-    const dead = [];
+    const message = `data: ${JSON.stringify({
+      type: 'node-renamed',
+      nodeId,
+      nodeType,
+      oldName,
+      newName,
+      oldPath,
+      newPath
+    })}\n\n`;
 
+    const dead = [];
     for (const res of subscribers) {
       try { res.write(message); } catch (e) { dead.push(res); }
     }
 
     if (dead.length) dead.forEach(res => subscribers.delete(res));
-    console.log(`[LiveSync] Sent file-renamed to user "${username}": ${oldName} → ${newName}`);
+    console.log(`[LiveSync] Sent node-renamed (${nodeType}) to user "${username}": ${oldPath} → ${newPath}`);
   },
 
-  broadcastFileMoved(username, nodeId, file, fromPath, toPath) {
+  /**
+   * Broadcast a node-moved event.
+   * For folder moves, the receiving client walks its own nodeMap descendants and
+   * rewrites their paths locally. No per-descendant events.
+   *
+   * @param {string} username
+   * @param {Object} data
+   * @param {number} data.nodeId
+   * @param {string} data.nodeType
+   * @param {string} data.name
+   * @param {string} data.oldPath
+   * @param {string} data.newPath
+   * @param {number|string} [data.oldParentId]
+   * @param {number|string} [data.newParentId]
+   */
+  broadcastNodeMoved(username, { nodeId, nodeType, name, oldPath, newPath, oldParentId, newParentId }) {
     const subscribers = userClients.get(username);
     if (!subscribers?.size) return;
 
-    const message = `data: ${JSON.stringify({ type: 'file-moved', nodeId, file, fromPath, toPath })}\n\n`;
-    const dead = [];
+    const message = `data: ${JSON.stringify({
+      type: 'node-moved',
+      nodeId,
+      nodeType,
+      name,
+      oldPath,
+      newPath,
+      oldParentId,
+      newParentId
+    })}\n\n`;
 
+    const dead = [];
     for (const res of subscribers) {
       try { res.write(message); } catch (e) { dead.push(res); }
     }
 
     if (dead.length) dead.forEach(res => subscribers.delete(res));
-    console.log(`[LiveSync] Sent file-moved to user "${username}": ${fromPath} → ${toPath}`);
+    console.log(`[LiveSync] Sent node-moved (${nodeType}) to user "${username}": ${oldPath} → ${newPath}`);
   },
 
-  broadcastFileDeleted(username, nodeId, file) {
+  /**
+   * Broadcast a node-deleted event.
+   * For folder deletes, the receiving client walks its own nodeMap descendants and
+   * removes them locally. No per-descendant events.
+   *
+   * @param {string} username
+   * @param {Object} data
+   * @param {number} data.nodeId
+   * @param {string} data.nodeType
+   * @param {string} data.name
+   * @param {string} data.path
+   */
+  broadcastNodeDeleted(username, { nodeId, nodeType, name, path }) {
     const subscribers = userClients.get(username);
     if (!subscribers?.size) return;
 
-    const message = `data: ${JSON.stringify({ type: 'file-deleted', nodeId, file })}\n\n`;
-    const dead = [];
+    const message = `data: ${JSON.stringify({
+      type: 'node-deleted',
+      nodeId,
+      nodeType,
+      name,
+      path
+    })}\n\n`;
 
+    const dead = [];
     for (const res of subscribers) {
       try { res.write(message); } catch (e) { dead.push(res); }
     }
 
     if (dead.length) dead.forEach(res => subscribers.delete(res));
-    console.log(`[LiveSync] Sent file-deleted to user "${username}": ${file}`);
+    console.log(`[LiveSync] Sent node-deleted (${nodeType}) to user "${username}": ${path}`);
   },
 
   /**

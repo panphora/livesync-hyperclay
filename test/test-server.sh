@@ -154,89 +154,121 @@ function parseSSE(raw) {
     return JSON.parse(raw.replace('data: ', '').trim());
 }
 
-test('broadcastFileSaved includes nodeId', () => {
+test('broadcastNodeSaved includes nodeId and nodeType', () => {
     const res = mockRes();
     liveSync.subscribeUser('test-user', res);
 
-    liveSync.broadcastFileSaved('test-user', 'my-site', {
+    liveSync.broadcastNodeSaved('test-user', {
+        nodeId: 42,
+        nodeType: 'site',
+        name: 'my-site',
+        path: 'my-site',
         content: '<html></html>',
         checksum: 'abc123',
-        modifiedAt: '2024-01-01T00:00:00Z',
-        nodeId: 42
+        modifiedAt: '2024-01-01T00:00:00Z'
     });
 
     assert(res.messages.length === 1, 'Should send 1 message');
     const data = parseSSE(res.messages[0]);
-    assert(data.type === 'file-saved', 'type should be file-saved');
+    assert(data.type === 'node-saved', 'type should be node-saved');
     assert(data.nodeId === 42, 'nodeId should be 42');
-    assert(data.file === 'my-site', 'file should be my-site');
+    assert(data.nodeType === 'site', 'nodeType should be site');
+    assert(data.name === 'my-site', 'name should be my-site');
+    assert(data.path === 'my-site', 'path should be my-site');
     assert(data.checksum === 'abc123', 'checksum should match');
+    assert(data.content === '<html></html>', 'content should be included for sites');
 
     liveSync.unsubscribeUser('test-user', res);
 });
 
-test('broadcastFileRenamed sends correct shape', () => {
+test('broadcastNodeRenamed sends correct shape', () => {
     const res = mockRes();
     liveSync.subscribeUser('test-user', res);
 
-    liveSync.broadcastFileRenamed('test-user', 99, 'old-name', 'new-name');
+    liveSync.broadcastNodeRenamed('test-user', {
+        nodeId: 99,
+        nodeType: 'site',
+        oldName: 'old-name',
+        newName: 'new-name',
+        oldPath: 'old-name',
+        newPath: 'new-name'
+    });
 
     assert(res.messages.length === 1, 'Should send 1 message');
     const data = parseSSE(res.messages[0]);
-    assert(data.type === 'file-renamed', 'type should be file-renamed');
+    assert(data.type === 'node-renamed', 'type should be node-renamed');
     assert(data.nodeId === 99, 'nodeId should be 99');
+    assert(data.nodeType === 'site', 'nodeType should be site');
     assert(data.oldName === 'old-name', 'oldName should match');
     assert(data.newName === 'new-name', 'newName should match');
+    assert(data.oldPath === 'old-name', 'oldPath should match');
+    assert(data.newPath === 'new-name', 'newPath should match');
 
     liveSync.unsubscribeUser('test-user', res);
 });
 
-test('broadcastFileMoved sends correct shape', () => {
+test('broadcastNodeMoved sends correct shape', () => {
     const res = mockRes();
     liveSync.subscribeUser('test-user', res);
 
-    liveSync.broadcastFileMoved('test-user', 55, 'my-site', 'my-site.html', 'blog/my-site.html');
+    liveSync.broadcastNodeMoved('test-user', {
+        nodeId: 55,
+        nodeType: 'site',
+        name: 'my-site.html',
+        oldPath: 'my-site.html',
+        newPath: 'blog/my-site.html',
+        oldParentId: 0,
+        newParentId: 10
+    });
 
     assert(res.messages.length === 1, 'Should send 1 message');
     const data = parseSSE(res.messages[0]);
-    assert(data.type === 'file-moved', 'type should be file-moved');
+    assert(data.type === 'node-moved', 'type should be node-moved');
     assert(data.nodeId === 55, 'nodeId should be 55');
-    assert(data.file === 'my-site', 'file should be my-site');
-    assert(data.fromPath === 'my-site.html', 'fromPath should match');
-    assert(data.toPath === 'blog/my-site.html', 'toPath should match');
+    assert(data.nodeType === 'site', 'nodeType should be site');
+    assert(data.name === 'my-site.html', 'name should match');
+    assert(data.oldPath === 'my-site.html', 'oldPath should match');
+    assert(data.newPath === 'blog/my-site.html', 'newPath should match');
 
     liveSync.unsubscribeUser('test-user', res);
 });
 
-test('broadcastFileDeleted sends correct shape', () => {
+test('broadcastNodeDeleted sends correct shape', () => {
     const res = mockRes();
     liveSync.subscribeUser('test-user', res);
 
-    liveSync.broadcastFileDeleted('test-user', 77, 'blog/my-site');
+    liveSync.broadcastNodeDeleted('test-user', {
+        nodeId: 77,
+        nodeType: 'site',
+        name: 'my-site',
+        path: 'blog/my-site'
+    });
 
     assert(res.messages.length === 1, 'Should send 1 message');
     const data = parseSSE(res.messages[0]);
-    assert(data.type === 'file-deleted', 'type should be file-deleted');
+    assert(data.type === 'node-deleted', 'type should be node-deleted');
     assert(data.nodeId === 77, 'nodeId should be 77');
-    assert(data.file === 'blog/my-site', 'file should match');
+    assert(data.nodeType === 'site', 'nodeType should be site');
+    assert(data.name === 'my-site', 'name should match');
+    assert(data.path === 'blog/my-site', 'path should match');
 
     liveSync.unsubscribeUser('test-user', res);
 });
 
-test('new broadcast methods are no-ops with no subscribers', () => {
+test('node broadcast methods are no-ops with no subscribers', () => {
     // Should not throw
-    liveSync.broadcastFileRenamed('nobody', 1, 'a', 'b');
-    liveSync.broadcastFileMoved('nobody', 1, 'a', 'a.html', 'b.html');
-    liveSync.broadcastFileDeleted('nobody', 1, 'a');
+    liveSync.broadcastNodeRenamed('nobody', { nodeId: 1, nodeType: 'site', oldName: 'a', newName: 'b', oldPath: 'a', newPath: 'b' });
+    liveSync.broadcastNodeMoved('nobody', { nodeId: 1, nodeType: 'site', name: 'a', oldPath: 'a.html', newPath: 'b.html' });
+    liveSync.broadcastNodeDeleted('nobody', { nodeId: 1, nodeType: 'site', name: 'a', path: 'a' });
 });
 
-test('new broadcast methods clean up dead connections', () => {
+test('node broadcast methods clean up dead connections', () => {
     const dead = { write() { throw new Error('dead'); } };
     const alive = mockRes();
     liveSync.subscribeUser('cleanup-test', dead);
     liveSync.subscribeUser('cleanup-test', alive);
 
-    liveSync.broadcastFileRenamed('cleanup-test', 1, 'a', 'b');
+    liveSync.broadcastNodeRenamed('cleanup-test', { nodeId: 1, nodeType: 'site', oldName: 'a', newName: 'b', oldPath: 'a', newPath: 'b' });
 
     assert(alive.messages.length === 1, 'Alive connection should receive message');
     const stats = liveSync.getStats();
