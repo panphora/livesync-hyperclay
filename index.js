@@ -163,13 +163,6 @@ const liveSync = {
   },
 
   /**
-   * Broadcast a file-saved event to a user's sync engine connections
-   * This is for disk sync - sends stripped content for writing to disk
-   * @param {string} username - User identifier
-   * @param {string} file - Site identifier that was saved
-   * @param {Object} data - { content, checksum, modifiedAt }
-   */
-  /**
    * Broadcast a node-saved event to a user's sync engine connections.
    *
    * For sites: includes inline content so receiving clients can write to disk directly.
