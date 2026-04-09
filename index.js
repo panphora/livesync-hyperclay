@@ -276,17 +276,24 @@ const liveSync = {
    * For folder moves, the receiving client walks its own nodeMap descendants and
    * rewrites their paths locally. No per-descendant events.
    *
+   * A move MAY also rename the node in the same atomic operation. When it does,
+   * oldName !== newName. Subscribers that need to act on the rename should
+   * compare oldName/newName rather than relying on basename(oldPath) vs
+   * basename(newPath) (which also agrees, but is easier to get wrong for folders).
+   *
    * @param {string} username
    * @param {Object} data
    * @param {number} data.nodeId
    * @param {string} data.nodeType
-   * @param {string} data.name
+   * @param {string} data.name - Post-operation name (alias of newName, for back-compat)
+   * @param {string} [data.oldName] - Name before the operation
+   * @param {string} [data.newName] - Name after the operation (same as name)
    * @param {string} data.oldPath
    * @param {string} data.newPath
    * @param {number|string} [data.oldParentId]
    * @param {number|string} [data.newParentId]
    */
-  broadcastNodeMoved(username, { nodeId, nodeType, name, oldPath, newPath, oldParentId, newParentId }) {
+  broadcastNodeMoved(username, { nodeId, nodeType, name, oldName, newName, oldPath, newPath, oldParentId, newParentId }) {
     const subscribers = userClients.get(username);
     if (!subscribers?.size) return;
 
@@ -295,6 +302,8 @@ const liveSync = {
       nodeId,
       nodeType,
       name,
+      oldName: oldName ?? name,
+      newName: newName ?? name,
       oldPath,
       newPath,
       oldParentId,
