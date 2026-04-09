@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0] - 2026-04-08
+
+### Changed
+- Extended broadcastNodeMoved with oldName/newName parameters to support atomic move+rename operations
+
+### Fixed
+- Removed stale broadcastFileSaved JSDoc comment left above broadcastNodeSaved
+
+### Breaking Changes
+- Replaced broadcastFile* methods with broadcastNode* methods
+
+
+
 ## [0.8.0] - 2026-02-26
 
 ### Added
