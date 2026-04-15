@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.1] - 2026-04-15
+
+### Changed
+- Extracted `writeToAll()` helper to centralize dead-connection cleanup across all broadcast methods
+- Updated channel key documentation throughout: keys are now full paths with extension (`blog/post.html`); platform callers prefix with `{username}:`, hyperclay-local callers pass the path directly
+- Updated `markBrowserSave` / `wasBrowserSave` docs to reflect full-path-with-extension key format
+
+### Added
+- Jest unit tests (27 tests) covering key isolation, multi-subscriber delivery, dead-connection cleanup, node lifecycle broadcasts, and stats
+
 ## [0.9.0] - 2026-04-08
 
 ### Changed

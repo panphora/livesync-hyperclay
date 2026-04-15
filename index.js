@@ -9,18 +9,49 @@
  * - hyperclay-local: sync-engine calls broadcast() when files change on disk
  */
 
-// Track SSE connections per file
-// Structure: Map<filename, Set<response>>
+// Track SSE connections per channel key.
+// Platform callers pass "{username}:{fullPath}" to scope by tenant.
+// hyperclay-local callers pass "{fullPath}" (single-user, no tenant prefix).
+// Full path = relative path including extension, e.g. "blog/post.html".
+// Structure: Map<channelKey, Set<response>>
 const clients = new Map();
 
 // Track SSE connections per user (for sync engine subscriptions)
 // Structure: Map<username, Set<response>>
 const userClients = new Map();
 
-// Track recent browser saves to avoid duplicate "file changed" notifications
-// Structure: Map<filename, timestamp>
+// Track recent browser saves to avoid duplicate "file changed" notifications.
+// Keys are full paths with extension (e.g. "blog/post.html"), matching
+// wasBrowserSave() callsites in engine-watcher.
+// Structure: Map<fullPath, timestamp>
 const recentBrowserSaves = new Map();
 const BROWSER_SAVE_WINDOW_MS = 2000;
+
+/**
+ * Write `message` to every subscriber; remove any whose write throws.
+ * Returns the count of successful writes. Centralizes dead-connection cleanup
+ * so every broadcast-like method has identical failure semantics.
+ *
+ * @param {Set<ServerResponse>} subscribers
+ * @param {string} message - pre-serialized SSE frame
+ * @param {string} label - short identifier for logs (e.g. "broadcast blog/post.html")
+ */
+function writeToAll(subscribers, message, label) {
+  if (!subscribers?.size) return 0;
+  const dead = [];
+  let sent = 0;
+  for (const res of subscribers) {
+    try {
+      res.write(message);
+      sent++;
+    } catch (e) {
+      console.log(`[LiveSync] Failed to write (${label}):`, e.message);
+      dead.push(res);
+    }
+  }
+  dead.forEach(res => subscribers.delete(res));
+  return sent;
+}
 
 /**
  * LiveSync utility object
@@ -28,7 +59,8 @@ const BROWSER_SAVE_WINDOW_MS = 2000;
 const liveSync = {
   /**
    * Subscribe an SSE response to a file's updates
-   * @param {string} file - Site identifier (e.g., "mysite")
+   * @param {string} file - Full identity key. Platform: "{username}:{path/name.ext}";
+   *   hyperclay-local: "{path/name.ext}". Always includes extension.
    * @param {ServerResponse} res - Express response object for SSE
    */
   subscribe(file, res) {
@@ -41,7 +73,7 @@ const liveSync = {
 
   /**
    * Unsubscribe an SSE response from a file's updates
-   * @param {string} file - Site identifier
+   * @param {string} file - Full identity key — same shape as subscribe()
    * @param {ServerResponse} res - Express response object
    */
   unsubscribe(file, res) {
@@ -55,7 +87,7 @@ const liveSync = {
 
   /**
    * Broadcast an update to all clients subscribed to a file
-   * @param {string} file - Site identifier
+   * @param {string} file - Full identity key — same shape as subscribe()
    * @param {Object} data - { html, sender }
    * @param {string} data.html - Full document HTML
    * @param {string} data.sender - Client ID or 'file-system'
@@ -74,24 +106,10 @@ const liveSync = {
       return;
     }
 
+    const total = subscribers.size;
     const message = `data: ${JSON.stringify({ html, sender })}\n\n`;
-    const dead = [];
-    let sent = 0;
-
-    for (const res of subscribers) {
-      try {
-        res.write(message);
-        sent++;
-      } catch (e) {
-        console.log(`[LiveSync] Failed to write to subscriber:`, e.message);
-        dead.push(res);
-      }
-    }
-
-    console.log(`[LiveSync] Sent to ${sent}/${subscribers.size} subscribers`);
-
-    // Clean up dead connections
-    dead.forEach(res => subscribers.delete(res));
+    const sent = writeToAll(subscribers, message, `broadcast ${file}`);
+    console.log(`[LiveSync] Sent to ${sent}/${total} subscribers`);
   },
 
   /**
@@ -124,7 +142,7 @@ const liveSync = {
   /**
    * Broadcast a file update to a user's sync engine connections
    * @param {string} username - User identifier
-   * @param {string} file - Site identifier that changed
+   * @param {string} file - Full path with extension (e.g. "blog/post.html")
    * @param {Object} data - { html, sender }
    */
   broadcastToUser(username, file, { html, sender }) {
@@ -141,25 +159,10 @@ const liveSync = {
 
     // Include file name and type so sync engine knows which file changed and how to handle it
     const message = `data: ${JSON.stringify({ type: 'live-sync', file, html, sender })}\n\n`;
-    const dead = [];
-    let sent = 0;
-
-    for (const res of subscribers) {
-      try {
-        res.write(message);
-        sent++;
-      } catch (e) {
-        console.log(`[LiveSync] Failed to write to user subscriber:`, e.message);
-        dead.push(res);
-      }
-    }
-
+    const sent = writeToAll(subscribers, message, `broadcastToUser ${username}`);
     if (sent > 0) {
       console.log(`[LiveSync] Sent to user "${username}": ${sent} connection(s), file=${file}`);
     }
-
-    // Clean up dead connections
-    dead.forEach(res => subscribers.delete(res));
   },
 
   /**
@@ -214,24 +217,10 @@ const liveSync = {
     }
 
     const message = `data: ${JSON.stringify(payload)}\n\n`;
-    const dead = [];
-    let sent = 0;
-
-    for (const res of subscribers) {
-      try {
-        res.write(message);
-        sent++;
-      } catch (e) {
-        console.log(`[LiveSync] Failed to write node-saved to user subscriber:`, e.message);
-        dead.push(res);
-      }
-    }
-
+    const sent = writeToAll(subscribers, message, `node-saved ${username} node=${nodeId}`);
     if (sent > 0) {
       console.log(`[LiveSync] Sent node-saved (${nodeType}) to user "${username}": ${sent} connection(s), node=${nodeId} path=${path}`);
     }
-
-    dead.forEach(res => subscribers.delete(res));
   },
 
   /**
@@ -262,12 +251,7 @@ const liveSync = {
       newPath
     })}\n\n`;
 
-    const dead = [];
-    for (const res of subscribers) {
-      try { res.write(message); } catch (e) { dead.push(res); }
-    }
-
-    if (dead.length) dead.forEach(res => subscribers.delete(res));
+    writeToAll(subscribers, message, `node-renamed ${username} node=${nodeId}`);
     console.log(`[LiveSync] Sent node-renamed (${nodeType}) to user "${username}": ${oldPath} → ${newPath}`);
   },
 
@@ -310,12 +294,7 @@ const liveSync = {
       newParentId
     })}\n\n`;
 
-    const dead = [];
-    for (const res of subscribers) {
-      try { res.write(message); } catch (e) { dead.push(res); }
-    }
-
-    if (dead.length) dead.forEach(res => subscribers.delete(res));
+    writeToAll(subscribers, message, `node-moved ${username} node=${nodeId}`);
     console.log(`[LiveSync] Sent node-moved (${nodeType}) to user "${username}": ${oldPath} → ${newPath}`);
   },
 
@@ -343,19 +322,14 @@ const liveSync = {
       path
     })}\n\n`;
 
-    const dead = [];
-    for (const res of subscribers) {
-      try { res.write(message); } catch (e) { dead.push(res); }
-    }
-
-    if (dead.length) dead.forEach(res => subscribers.delete(res));
+    writeToAll(subscribers, message, `node-deleted ${username} node=${nodeId}`);
     console.log(`[LiveSync] Sent node-deleted (${nodeType}) to user "${username}": ${path}`);
   },
 
   /**
    * Send a notification to all clients subscribed to a file
    * Shows a toast instead of morphing content
-   * @param {string} file - Site identifier
+   * @param {string} file - Full identity key — same shape as subscribe()
    * @param {Object} data - { msgType, msg, action? }
    * @param {string} data.msgType - Toast type: "warning", "info", "error", "success"
    * @param {string} data.msg - Message to display
@@ -378,24 +352,10 @@ const liveSync = {
       payload.action = action;
     }
 
+    const total = subscribers.size;
     const message = `data: ${JSON.stringify(payload)}\n\n`;
-    const dead = [];
-    let sent = 0;
-
-    for (const res of subscribers) {
-      try {
-        res.write(message);
-        sent++;
-      } catch (e) {
-        console.log(`[LiveSync] Failed to write notification to subscriber:`, e.message);
-        dead.push(res);
-      }
-    }
-
-    console.log(`[LiveSync] Notification sent to ${sent}/${subscribers.size} subscribers`);
-
-    // Clean up dead connections
-    dead.forEach(res => subscribers.delete(res));
+    const sent = writeToAll(subscribers, message, `notify ${file}`);
+    console.log(`[LiveSync] Notification sent to ${sent}/${total} subscribers`);
   },
 
   /**
@@ -423,7 +383,7 @@ const liveSync = {
   /**
    * Mark a file as recently saved by a browser.
    * Call after writing a file via browser save endpoint.
-   * @param {string} file - Site identifier (without .html)
+   * @param {string} file - Full path with extension (e.g. "blog/post.html")
    */
   markBrowserSave(file) {
     recentBrowserSaves.set(file, Date.now());
@@ -438,7 +398,7 @@ const liveSync = {
   /**
    * Check if a file was recently saved by a browser.
    * Use to skip "file changed on disk" notifications for browser-initiated saves.
-   * @param {string} file - Site identifier (without .html)
+   * @param {string} file - Full path with extension (e.g. "blog/post.html")
    * @returns {boolean}
    */
   wasBrowserSave(file) {

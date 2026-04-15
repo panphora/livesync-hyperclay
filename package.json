@@ -1,10 +1,12 @@
 {
   "name": "livesync-hyperclay",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Stateless utility for managing SSE client connections - subscribe/unsubscribe/broadcast",
   "main": "index.js",
   "scripts": {
-    "test": "./test/test-server.sh",
+    "test": "jest && ./test/test-server.sh",
+    "test:unit": "jest",
+    "test:integration": "./test/test-server.sh",
     "release": "./scripts/release.sh"
   },
   "keywords": [
@@ -26,6 +28,7 @@
     "url": "https://github.com/panphora/livesync-hyperclay/issues"
   },
   "devDependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "jest": "^30.3.0"
   }
 }
