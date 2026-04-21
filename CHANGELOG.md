@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.0] - 2026-04-20
+
+### Added
+- livesync handling in index.js with unit test coverage
+
+### Changed
+- writeToAll refactor, full-path key docs, unit tests
+
+
+
 ## [0.9.1] - 2026-04-15
 
 ### Changed
