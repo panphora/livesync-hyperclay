@@ -22,7 +22,9 @@ describe('subscribe / broadcast key isolation', () => {
     liveSync.subscribe('alice:blog/post.html', res);
     liveSync.broadcast('alice:blog/post.html', { html: '<p>hi</p>', sender: 'A' });
     expect(res.count).toBe(1);
-    expect(parseSSE(res.writes[0])).toEqual({ html: '<p>hi</p>', sender: 'A' });
+    const msg = parseSSE(res.writes[0]);
+    expect(msg).toMatchObject({ html: '<p>hi</p>', sender: 'A' });
+    expect(typeof msg.seq).toBe('number');
     liveSync.unsubscribe('alice:blog/post.html', res);
   });
 
@@ -56,6 +58,39 @@ describe('subscribe / broadcast key isolation', () => {
     expect(r2.count).toBe(1);
     liveSync.unsubscribe('t:multi.html', r1);
     liveSync.unsubscribe('t:multi.html', r2);
+  });
+});
+
+describe('broadcast stamps a monotonic seq', () => {
+  test('consecutive broadcasts produce strictly increasing seq', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:seq.html', res);
+    // Three back-to-back broadcasts — on fast machines all three land in the
+    // same ms, which exercises the tie-break branch (lastSeq + 1).
+    liveSync.broadcast('t:seq.html', { html: 'a', sender: 'x' });
+    liveSync.broadcast('t:seq.html', { html: 'b', sender: 'x' });
+    liveSync.broadcast('t:seq.html', { html: 'c', sender: 'x' });
+
+    const seqs = res.writes.map(w => parseSSE(w).seq);
+    expect(seqs.length).toBe(3);
+    expect(seqs[0]).toBeLessThan(seqs[1]);
+    expect(seqs[1]).toBeLessThan(seqs[2]);
+    liveSync.unsubscribe('t:seq.html', res);
+  });
+
+  test('seq advances across different channels', () => {
+    const r1 = mockRes();
+    const r2 = mockRes();
+    liveSync.subscribe('t:seq-a.html', r1);
+    liveSync.subscribe('t:seq-b.html', r2);
+    liveSync.broadcast('t:seq-a.html', { html: 'a', sender: 'x' });
+    liveSync.broadcast('t:seq-b.html', { html: 'b', sender: 'x' });
+
+    const s1 = parseSSE(r1.writes[0]).seq;
+    const s2 = parseSSE(r2.writes[0]).seq;
+    expect(s1).toBeLessThan(s2);
+    liveSync.unsubscribe('t:seq-a.html', r1);
+    liveSync.unsubscribe('t:seq-b.html', r2);
   });
 });
 

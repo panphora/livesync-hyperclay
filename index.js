@@ -27,6 +27,16 @@ const userClients = new Map();
 const recentBrowserSaves = new Map();
 const BROWSER_SAVE_WINDOW_MS = 2000;
 
+// Monotonic sequence counter for broadcasts. Uses Date.now() so it survives
+// process restarts (clients drop incoming messages whose seq is <= the last
+// seq they applied). Bumped by 1 when two broadcasts land on the same ms.
+let lastSeq = 0;
+function nextSeq() {
+  const now = Date.now();
+  lastSeq = now > lastSeq ? now : lastSeq + 1;
+  return lastSeq;
+}
+
 /**
  * Write `message` to every subscriber; remove any whose write throws.
  * Returns the count of successful writes. Centralizes dead-connection cleanup
@@ -107,7 +117,7 @@ const liveSync = {
     }
 
     const total = subscribers.size;
-    const message = `data: ${JSON.stringify({ html, sender })}\n\n`;
+    const message = `data: ${JSON.stringify({ html, sender, seq: nextSeq() })}\n\n`;
     const sent = writeToAll(subscribers, message, `broadcast ${file}`);
     console.log(`[LiveSync] Sent to ${sent}/${total} subscribers`);
   },
