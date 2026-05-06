@@ -98,11 +98,13 @@ const liveSync = {
   /**
    * Broadcast an update to all clients subscribed to a file
    * @param {string} file - Full identity key — same shape as subscribe()
-   * @param {Object} data - { html, sender }
+   * @param {Object} data - { html, sender, identityMap? }
    * @param {string} data.html - Full document HTML
    * @param {string} data.sender - Client ID or 'file-system'
+   * @param {Object} [data.identityMap] - Optional opaque element-identity map
+   *   from the sender. Forwarded as-is to receivers; older clients ignore it.
    */
-  broadcast(file, { html, sender }) {
+  broadcast(file, { html, sender, identityMap }) {
     const subscribers = clients.get(file);
     console.log(`[LiveSync] Broadcasting to "${file}": ${subscribers?.size || 0} subscriber(s), sender=${sender}`);
 
@@ -116,8 +118,13 @@ const liveSync = {
       return;
     }
 
+    // Only attach identityMap when defined — keeps the wire byte-identical
+    // to today's payload for senders that haven't been updated.
+    const payload = { html, sender, seq: nextSeq() };
+    if (identityMap !== undefined) payload.identityMap = identityMap;
+
     const total = subscribers.size;
-    const message = `data: ${JSON.stringify({ html, sender, seq: nextSeq() })}\n\n`;
+    const message = `data: ${JSON.stringify(payload)}\n\n`;
     const sent = writeToAll(subscribers, message, `broadcast ${file}`);
     console.log(`[LiveSync] Sent to ${sent}/${total} subscribers`);
   },

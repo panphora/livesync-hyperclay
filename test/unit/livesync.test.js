@@ -94,6 +94,45 @@ describe('broadcast stamps a monotonic seq', () => {
   });
 });
 
+describe('broadcast forwards identityMap when present', () => {
+  test('identityMap is included in the SSE payload when defined', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:idmap.html', res);
+    liveSync.broadcast('t:idmap.html', {
+      html: '<p>hi</p>',
+      sender: 'A',
+      identityMap: { '': 'A:1', '0': 'A:2' }
+    });
+    const msg = parseSSE(res.writes[0]);
+    expect(msg.identityMap).toEqual({ '': 'A:1', '0': 'A:2' });
+    liveSync.unsubscribe('t:idmap.html', res);
+  });
+
+  test('identityMap is absent (not undefined) when not provided', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:idmap-absent.html', res);
+    liveSync.broadcast('t:idmap-absent.html', { html: 'x', sender: 'A' });
+    const raw = res.writes[0];
+    expect(raw).not.toContain('identityMap');
+    const msg = parseSSE(raw);
+    expect('identityMap' in msg).toBe(false);
+    liveSync.unsubscribe('t:idmap-absent.html', res);
+  });
+
+  test('broadcastToUser never carries identityMap even if passed', () => {
+    const res = mockRes();
+    liveSync.subscribeUser('u-idmap', res);
+    liveSync.broadcastToUser('u-idmap', 'idx.html', {
+      html: 'x',
+      sender: 'A',
+      identityMap: { '': 'A:1' }
+    });
+    const msg = parseSSE(res.writes[0]);
+    expect('identityMap' in msg).toBe(false);
+    liveSync.unsubscribeUser('u-idmap', res);
+  });
+});
+
 describe('broadcast refuses bad input', () => {
   test('non-string html is refused', () => {
     const res = mockRes();
