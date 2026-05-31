@@ -22,7 +22,7 @@ npm install livesync-hyperclay
 const { liveSync } = require('livesync-hyperclay');
 
 // SSE stream endpoint
-app.get('/live-sync/stream', (req, res) => {
+app.get('/_/live-sync/stream', (req, res) => {
   const file = req.query.file;
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -39,7 +39,7 @@ app.get('/live-sync/stream', (req, res) => {
 });
 
 // Save endpoint
-app.post('/live-sync/save', (req, res) => {
+app.post('/_/live-sync/save', (req, res) => {
   const { file, body, headHash, sender } = req.body;
 
   liveSync.broadcast(file, { body, headHash, sender });
@@ -119,7 +119,7 @@ Include the LiveSync client via CDN:
 
 ```bash
 # Should return 400 error
-curl -X POST http://localhost:4321/live-sync/save \
+curl -X POST http://localhost:4321/_/live-sync/save \
   -H "Content-Type: application/json" \
   -d '{"file":"../etc/passwd","body":"test","sender":"test"}'
 ```
