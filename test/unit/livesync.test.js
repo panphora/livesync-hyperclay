@@ -409,3 +409,56 @@ describe('getStats', () => {
     liveSync.unsubscribeUser('stats-user', res);
   });
 });
+
+describe('broadcastCollectionRecord — named SSE event for dashboards', () => {
+  // Named-event frames are "event: collection-record\ndata: {...}\n\n", so the
+  // bare data-only parseSSE() above won't match them — parse explicitly here.
+  function parseNamedSSE(msg) {
+    const m = msg.match(/^event: collection-record\ndata: (.+)\n\n$/);
+    return m ? JSON.parse(m[1]) : null;
+  }
+
+  test('create frame carries op/id/data and a named event', () => {
+    const res = mockRes();
+    liveSync.subscribe('owner:forms/dashboard.html', res);
+    const n = liveSync.broadcastCollectionRecord('owner:forms/dashboard.html', {
+      op: 'create', id: 'x', data: { a: 1 }, modifiedAt: 't'
+    });
+    expect(n).toBe(1);
+    const raw = res.writes[0];
+    expect(raw.startsWith('event: collection-record\n')).toBe(true);
+    const msg = parseNamedSSE(raw);
+    expect(msg).toMatchObject({ type: 'collection-record', op: 'create', id: 'x', data: { a: 1 }, modifiedAt: 't' });
+    expect(typeof msg.seq).toBe('number');
+    liveSync.unsubscribe('owner:forms/dashboard.html', res);
+  });
+
+  test('delete frame omits data', () => {
+    const res = mockRes();
+    liveSync.subscribe('owner:forms/d2.html', res);
+    liveSync.broadcastCollectionRecord('owner:forms/d2.html', { op: 'delete', id: 'gone' });
+    const raw = res.writes[0];
+    expect(raw).not.toContain('"data"');
+    const msg = parseNamedSSE(raw);
+    expect(msg.op).toBe('delete');
+    expect(msg.id).toBe('gone');
+    expect('data' in msg).toBe(false);
+    liveSync.unsubscribe('owner:forms/d2.html', res);
+  });
+
+  test('no subscribers is a safe no-op returning 0', () => {
+    expect(liveSync.broadcastCollectionRecord('owner:nobody.html', { op: 'create', id: 'x', data: {} })).toBe(0);
+  });
+
+  test('dead connection is cleaned up', () => {
+    const live = mockRes();
+    const dead = { write() { throw new Error('EPIPE'); } };
+    liveSync.subscribe('owner:dead-cr.html', live);
+    liveSync.subscribe('owner:dead-cr.html', dead);
+    liveSync.broadcastCollectionRecord('owner:dead-cr.html', { op: 'create', id: '1', data: {} });
+    expect(live.count).toBe(1);
+    liveSync.broadcastCollectionRecord('owner:dead-cr.html', { op: 'create', id: '2', data: {} });
+    expect(live.count).toBe(2);
+    liveSync.unsubscribe('owner:dead-cr.html', live);
+  });
+});

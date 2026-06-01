@@ -376,6 +376,29 @@ const liveSync = {
   },
 
   /**
+   * Broadcast a collection-record change to browser subscribers of a file channel
+   * (a collection dashboard). Focused sibling of notify()/broadcast(): one fixed
+   * shape, so it can't clutter the channel. Emits a NAMED SSE event, so only
+   * es.addEventListener('collection-record', …) receives it (not onmessage).
+   *
+   * @param {string} file - channel key "{ownerUsername}:{fullPath}"
+   * @param {Object} data
+   * @param {'create'|'update'|'delete'} data.op
+   * @param {string} data.id - record id (the record's key)
+   * @param {Object} [data.data] - record fields (omit for delete)
+   * @param {string} [data.modifiedAt]
+   * @returns {number} subscribers written to
+   */
+  broadcastCollectionRecord(file, { op, id, data, modifiedAt }) {
+    const subscribers = clients.get(file);
+    if (!subscribers?.size) return 0;
+    const payload = { type: 'collection-record', op, id, modifiedAt, seq: nextSeq() };
+    if (op !== 'delete') payload.data = data;
+    const message = `event: collection-record\ndata: ${JSON.stringify(payload)}\n\n`;
+    return writeToAll(subscribers, message, `collection-record ${file} ${id}`);
+  },
+
+  /**
    * Get statistics about active connections
    * @returns {{ rooms: number, connections: number, userConnections: number }}
    */
