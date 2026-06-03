@@ -462,3 +462,75 @@ describe('broadcastCollectionRecord — named SSE event for dashboards', () => {
     liveSync.unsubscribe('owner:dead-cr.html', live);
   });
 });
+
+describe('closeChannel — force-disconnect a channel (share revoke)', () => {
+  // res with both write() and end() — closeChannel ends, broadcast writes.
+  function endableRes() {
+    const writes = [];
+    return {
+      writes,
+      ended: 0,
+      write(msg) { writes.push(msg); },
+      end() { this.ended++; },
+      get count() { return writes.length; }
+    };
+  }
+
+  test('ends every response on the channel and returns the count', () => {
+    const r1 = endableRes();
+    const r2 = endableRes();
+    liveSync.subscribe('owner:cc/a.html', r1);
+    liveSync.subscribe('owner:cc/a.html', r2);
+    const closed = liveSync.closeChannel('owner:cc/a.html');
+    expect(closed).toBe(2);
+    expect(r1.ended).toBe(1);
+    expect(r2.ended).toBe(1);
+  });
+
+  test('drops the channel: a later broadcast reaches nobody', () => {
+    const res = endableRes();
+    liveSync.subscribe('owner:cc/b.html', res);
+    liveSync.closeChannel('owner:cc/b.html');
+    liveSync.broadcast('owner:cc/b.html', { html: 'x', sender: 'y' });
+    expect(res.count).toBe(0);
+    expect(liveSync.broadcastCollectionRecord('owner:cc/b.html', { op: 'create', id: '1', data: {} })).toBe(0);
+  });
+
+  test('only the target channel is closed; siblings untouched', () => {
+    const target = endableRes();
+    const other = endableRes();
+    liveSync.subscribe('owner:cc/target.html', target);
+    liveSync.subscribe('owner:cc/other.html', other);
+    liveSync.closeChannel('owner:cc/target.html');
+    expect(target.ended).toBe(1);
+    expect(other.ended).toBe(0);
+    liveSync.broadcast('owner:cc/other.html', { html: 'x', sender: 'y' });
+    expect(other.count).toBe(1);
+    liveSync.unsubscribe('owner:cc/other.html', other);
+  });
+
+  test('empty / unknown channel is a safe no-op returning 0', () => {
+    expect(liveSync.closeChannel('owner:cc/nobody.html')).toBe(0);
+  });
+
+  test('one throwing end() does not stop the others', () => {
+    const bad = { end() { throw new Error('broken pipe'); } };
+    const good = endableRes();
+    liveSync.subscribe('owner:cc/throw.html', bad);
+    liveSync.subscribe('owner:cc/throw.html', good);
+    expect(() => liveSync.closeChannel('owner:cc/throw.html')).not.toThrow();
+    expect(good.ended).toBe(1);
+  });
+
+  test('the channel can be re-subscribed after close', () => {
+    const first = endableRes();
+    liveSync.subscribe('owner:cc/reuse.html', first);
+    liveSync.closeChannel('owner:cc/reuse.html');
+    const second = endableRes();
+    liveSync.subscribe('owner:cc/reuse.html', second);
+    liveSync.broadcast('owner:cc/reuse.html', { html: 'x', sender: 'y' });
+    expect(second.count).toBe(1);
+    expect(first.count).toBe(0);
+    liveSync.unsubscribe('owner:cc/reuse.html', second);
+  });
+});

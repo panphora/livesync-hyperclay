@@ -399,6 +399,33 @@ const liveSync = {
   },
 
   /**
+   * Force-close every SSE response on a channel and drop the channel.
+   * Connection-lifecycle only — the caller owns any auth decision. The platform
+   * uses this to disconnect viewers when a share is revoked: each viewer's
+   * EventSource then reconnects, re-runs the route's auth, and fails closed.
+   * @param {string} file - Full identity key — same shape as subscribe()
+   * @returns {number} responses closed
+   */
+  closeChannel(file) {
+    const subscribers = clients.get(file);
+    if (!subscribers?.size) return 0;
+    // Clear the channel first so each res's own close handler (which calls
+    // unsubscribe) is a harmless no-op while we end the connections.
+    clients.delete(file);
+    let closed = 0;
+    for (const res of subscribers) {
+      try {
+        res.end();
+        closed++;
+      } catch (e) {
+        console.log(`[LiveSync] closeChannel failed for "${file}":`, e.message);
+      }
+    }
+    console.log(`[LiveSync] Closed channel "${file}": ${closed} stream(s)`);
+    return closed;
+  },
+
+  /**
    * Get statistics about active connections
    * @returns {{ rooms: number, connections: number, userConnections: number }}
    */

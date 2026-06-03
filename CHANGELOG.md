@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.0] - 2026-06-03
+
+### Added
+- `closeChannel(file)` force-disconnects every open SSE stream on a channel and drops it, so a share revoke can fail-closed an already-open viewer (the reconnect re-authenticates and 403s). Unit tests cover the empty-channel, single, and multi-subscriber cases plus error isolation.
+
+## [0.11.0] - 2026-06-01
+
+### Added
+- `broadcastCollectionRecord()` so collection record create/update/delete events fan out over live-sync to open dashboards
+
+## [0.10.1] - 2026-05-06
+
+### Added
+- Forward optional `identityMap` on broadcast (browser-channel only)
+
 ## [0.10.0] - 2026-04-20
 
 ### Added
