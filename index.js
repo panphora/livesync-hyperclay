@@ -352,7 +352,7 @@ const liveSync = {
    * @param {string} data.msg - Message to display
    * @param {string} [data.action] - Optional action hint: "reload", etc.
    */
-  notify(file, { msgType, msg, action }) {
+  notify(file, { msgType, msg, action, data }) {
     const subscribers = clients.get(file);
     console.log(`[LiveSync] Notifying "${file}": ${subscribers?.size || 0} subscriber(s), msgType=${msgType}`);
 
@@ -367,6 +367,10 @@ const liveSync = {
     };
     if (action) {
       payload.action = action;
+    }
+    // Optional structured payload (e.g. the data-loss event for the guard chip).
+    if (data !== undefined) {
+      payload.data = data;
     }
 
     const total = subscribers.size;
