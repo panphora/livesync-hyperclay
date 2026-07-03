@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.0] - 2026-07-02
+
+### Added
+- Per-subscriber lanes on the per-file channel: `subscribe(file, res, { lane: 'live' | 'saved' })`. `broadcast()` and `notify()` take `{ lane: 'live' | 'saved' | 'all' }` and only write to matching subscribers. Defaults everywhere are `'live'`, so existing callsites and old clients behave exactly as before. The `saved` lane carries only post-strip on-disk HTML for view-mode tabs; pre-strip snapshots, notifications, and collection-record events stay on `live`.
+
 ## [0.12.0] - 2026-06-03
 
 ### Added

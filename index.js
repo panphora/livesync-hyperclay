@@ -16,6 +16,20 @@
 // Structure: Map<channelKey, Set<response>>
 const clients = new Map();
 
+// Lane per subscriber connection. Two lanes share each per-file channel:
+//   'live'  — edit-mode tabs. Carries pre-strip peer snapshots (may contain
+//             [no-save] runtime content), notifications, collection-record.
+//             Owner-gated by the caller. The default everywhere, so untouched
+//             callsites and old clients keep today's exact behavior.
+//   'saved' — view-mode tabs. Carries only post-strip on-disk HTML broadcast
+//             from the save seams — the same bytes any viewer could GET.
+// Structure: WeakMap<response, 'live'|'saved'>; absent = 'live'.
+const subscriberLanes = new WeakMap();
+
+function laneOf(res) {
+  return subscriberLanes.get(res) || 'live';
+}
+
 // Track SSE connections per user (for sync engine subscriptions)
 // Structure: Map<username, Set<response>>
 const userClients = new Map();
@@ -38,19 +52,22 @@ function nextSeq() {
 }
 
 /**
- * Write `message` to every subscriber; remove any whose write throws.
- * Returns the count of successful writes. Centralizes dead-connection cleanup
- * so every broadcast-like method has identical failure semantics.
+ * Write `message` to every subscriber on the given lane; remove any whose
+ * write throws. Returns the count of successful writes. Centralizes
+ * dead-connection cleanup so every broadcast-like method has identical
+ * failure semantics.
  *
  * @param {Set<ServerResponse>} subscribers
  * @param {string} message - pre-serialized SSE frame
  * @param {string} label - short identifier for logs (e.g. "broadcast blog/post.html")
+ * @param {'live'|'saved'|'all'} [lane='live'] - which lane to write to
  */
-function writeToAll(subscribers, message, label) {
+function writeToAll(subscribers, message, label, lane = 'live') {
   if (!subscribers?.size) return 0;
   const dead = [];
   let sent = 0;
   for (const res of subscribers) {
+    if (lane !== 'all' && laneOf(res) !== lane) continue;
     try {
       res.write(message);
       sent++;
@@ -72,13 +89,18 @@ const liveSync = {
    * @param {string} file - Full identity key. Platform: "{username}:{path/name.ext}";
    *   hyperclay-local: "{path/name.ext}". Always includes extension.
    * @param {ServerResponse} res - Express response object for SSE
+   * @param {Object} [options]
+   * @param {'live'|'saved'} [options.lane='live'] - 'saved' subscribes a
+   *   view-mode tab that only receives post-strip on-disk HTML. The caller
+   *   owns the auth decision per lane.
    */
-  subscribe(file, res) {
+  subscribe(file, res, { lane = 'live' } = {}) {
     if (!clients.has(file)) {
       clients.set(file, new Set());
     }
     clients.get(file).add(res);
-    console.log(`[LiveSync] Subscribed to "${file}", now ${clients.get(file).size} subscriber(s)`);
+    subscriberLanes.set(res, lane === 'saved' ? 'saved' : 'live');
+    console.log(`[LiveSync] Subscribed to "${file}" (lane=${laneOf(res)}), now ${clients.get(file).size} subscriber(s)`);
   },
 
   /**
@@ -96,17 +118,21 @@ const liveSync = {
   },
 
   /**
-   * Broadcast an update to all clients subscribed to a file
+   * Broadcast an update to clients subscribed to a file
    * @param {string} file - Full identity key — same shape as subscribe()
    * @param {Object} data - { html, sender, identityMap? }
    * @param {string} data.html - Full document HTML
    * @param {string} data.sender - Client ID or 'file-system'
    * @param {Object} [data.identityMap] - Optional opaque element-identity map
    *   from the sender. Forwarded as-is to receivers; older clients ignore it.
+   * @param {Object} [options]
+   * @param {'live'|'saved'|'all'} [options.lane='live'] - Which lane receives
+   *   this payload. Pre-strip snapshots must stay on 'live' (the default);
+   *   only post-strip on-disk HTML may go to 'saved' or 'all'.
    */
-  broadcast(file, { html, sender, identityMap }) {
+  broadcast(file, { html, sender, identityMap }, { lane = 'live' } = {}) {
     const subscribers = clients.get(file);
-    console.log(`[LiveSync] Broadcasting to "${file}": ${subscribers?.size || 0} subscriber(s), sender=${sender}`);
+    console.log(`[LiveSync] Broadcasting to "${file}" (lane=${lane}): ${subscribers?.size || 0} subscriber(s), sender=${sender}`);
 
     if (!subscribers?.size) {
       console.log(`[LiveSync] No subscribers for "${file}", available rooms:`, Array.from(clients.keys()));
@@ -125,7 +151,7 @@ const liveSync = {
 
     const total = subscribers.size;
     const message = `data: ${JSON.stringify(payload)}\n\n`;
-    const sent = writeToAll(subscribers, message, `broadcast ${file}`);
+    const sent = writeToAll(subscribers, message, `broadcast ${file}`, lane);
     console.log(`[LiveSync] Sent to ${sent}/${total} subscribers`);
   },
 
@@ -344,15 +370,19 @@ const liveSync = {
   },
 
   /**
-   * Send a notification to all clients subscribed to a file
+   * Send a notification to clients subscribed to a file
    * Shows a toast instead of morphing content
    * @param {string} file - Full identity key — same shape as subscribe()
    * @param {Object} data - { msgType, msg, action? }
    * @param {string} data.msgType - Toast type: "warning", "info", "error", "success"
    * @param {string} data.msg - Message to display
    * @param {string} [data.action] - Optional action hint: "reload", etc.
+   * @param {Object} [options]
+   * @param {'live'|'saved'|'all'} [options.lane='live'] - Notifications are
+   *   owner/edit-facing (data-loss chip, reload toasts), so they stay on the
+   *   live lane unless a caller explicitly widens them.
    */
-  notify(file, { msgType, msg, action, data }) {
+  notify(file, { msgType, msg, action, data }, { lane = 'live' } = {}) {
     const subscribers = clients.get(file);
     console.log(`[LiveSync] Notifying "${file}": ${subscribers?.size || 0} subscriber(s), msgType=${msgType}`);
 
@@ -375,7 +405,7 @@ const liveSync = {
 
     const total = subscribers.size;
     const message = `data: ${JSON.stringify(payload)}\n\n`;
-    const sent = writeToAll(subscribers, message, `notify ${file}`);
+    const sent = writeToAll(subscribers, message, `notify ${file}`, lane);
     console.log(`[LiveSync] Notification sent to ${sent}/${total} subscribers`);
   },
 
@@ -399,6 +429,7 @@ const liveSync = {
     const payload = { type: 'collection-record', op, id, modifiedAt, seq: nextSeq() };
     if (op !== 'delete') payload.data = data;
     const message = `event: collection-record\ndata: ${JSON.stringify(payload)}\n\n`;
+    // Live lane only — dashboards subscribe without a lane and land on 'live'.
     return writeToAll(subscribers, message, `collection-record ${file} ${id}`);
   },
 
