@@ -40,9 +40,9 @@ app.get('/_/live-sync/stream', (req, res) => {
 
 // Save endpoint
 app.post('/_/live-sync/save', (req, res) => {
-  const { file, body, headHash, sender } = req.body;
+  const { file, html, sender } = req.body;
 
-  liveSync.broadcast(file, { body, headHash, sender });
+  liveSync.broadcast(file, { html, sender });
 
   res.json({ success: true });
 });
@@ -50,25 +50,37 @@ app.post('/_/live-sync/save', (req, res) => {
 
 ## API
 
-### `liveSync.subscribe(file, res)`
+### `liveSync.subscribe(file, res, { lane } = {})`
 
 Register an SSE response object to receive updates for a file.
 
-- `file` - Site identifier (e.g., `"index"`, `"about"`)
+- `file` - Full identity key. On the platform, `{username}:{path/name.ext}`;
+  in hyperclay-local, `{path/name.ext}`. Always includes the extension.
 - `res` - Express response object (SSE connection)
+- `lane` - `'live'` (default), `'saved'`, or `'all'`
 
 ### `liveSync.unsubscribe(file, res)`
 
 Remove an SSE response from a file's subscribers.
 
-### `liveSync.broadcast(file, { body, headHash, sender })`
+### `liveSync.broadcast(file, { html, sender, identityMap }, { lane } = {})`
 
 Send an update to all clients subscribed to a file.
 
-- `file` - Site identifier
-- `body` - Body innerHTML
-- `headHash` - SHA-256 hash of head content (first 16 hex chars)
-- `sender` - Client ID or `'file-system'`
+- `file` - Full identity key, same form as `subscribe`
+- `html` - Full document HTML, not body innerHTML
+- `sender` - Client ID, or a server-side origin like `'file-watcher'`
+- `identityMap` - Optional opaque element-identity map, forwarded as-is.
+  Omitted entirely when undefined, so the wire stays byte-identical for
+  senders that don't set it.
+- `lane` - `'live'` (default), `'saved'`, or `'all'`. Pre-strip snapshots
+  must stay on `'live'`; only post-strip on-disk HTML may go to `'saved'`
+  or `'all'`.
+
+`html` must be a string. Anything else is refused with a logged error and
+no broadcast, so a wrong key name fails silently at the network layer.
+
+Each delivered payload also carries a monotonic `seq` the library assigns.
 
 ### `liveSync.getStats()`
 
@@ -76,10 +88,19 @@ Returns connection statistics:
 
 ```javascript
 {
-  rooms: 3,        // Number of files with active connections
-  connections: 7   // Total connected clients
+  rooms: 3,            // Number of files with active connections
+  connections: 7,      // Total file-level connected clients
+  userConnections: 2   // Total user-level connected clients
 }
 ```
+
+### Other methods
+
+The user-level and node-level broadcast surface is not documented here yet:
+`subscribeUser`, `unsubscribeUser`, `broadcastToUser`, `broadcastNodeSaved`,
+`broadcastNodeRenamed`, `broadcastNodeMoved`, `broadcastNodeDeleted`,
+`notify`, `broadcastCollectionRecord`, `closeChannel`, `markBrowserSave`,
+and `wasBrowserSave`. See the JSDoc in `index.js` for their signatures.
 
 ## Integration
 
