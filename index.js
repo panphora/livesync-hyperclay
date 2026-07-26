@@ -21,8 +21,11 @@ const clients = new Map();
 //             [no-save] runtime content), notifications, collection-record.
 //             Owner-gated by the caller. The default everywhere, so untouched
 //             callsites and old clients keep today's exact behavior.
-//   'saved' — view-mode tabs. Carries only post-strip on-disk HTML broadcast
-//             from the save seams — the same bytes any viewer could GET.
+//   'saved' — view-mode tabs. Carries whole documents meant for viewers: the
+//             post-strip on-disk HTML the save seams broadcast, plus a client's
+//             own {document} relay through the host's spec §10 /_/sync route,
+//             which is owner-gated and validated as a complete document but is
+//             never persisted, backed up, or scanned. Never pre-strip content.
 // Structure: WeakMap<response, 'live'|'saved'>; absent = 'live'.
 const subscriberLanes = new WeakMap();
 
@@ -128,7 +131,9 @@ const liveSync = {
    * @param {Object} [options]
    * @param {'live'|'saved'|'all'} [options.lane='live'] - Which lane receives
    *   this payload. Pre-strip snapshots must stay on 'live' (the default);
-   *   only post-strip on-disk HTML may go to 'saved' or 'all'.
+   *   'saved' and 'all' reach viewers, so only a whole document that is safe for
+   *   anyone who can view the page may go there — on-disk HTML from the save
+   *   seams, or an owner's {document} relay. Never [no-save] runtime content.
    */
   broadcast(file, { html, sender, identityMap }, { lane = 'live' } = {}) {
     const subscribers = clients.get(file);
