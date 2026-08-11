@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.14.2] - 2026-08-11
+
+### Added
+- Declare kind, status, and url in the hyper key
+
+### Fixed
+- Corrected the saved-lane comments
+
+
+
 ## [0.14.0] - 2026-07-13
 
 ### Added
