@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- License: relicensed to MIT-0 (MIT No Attribution). Same rights, attribution no longer required.
+
+### Fixed
+- Added the LICENSE file (MIT, as package.json has always declared); published tarballs now carry the license text.
+
+
+
 ## [0.14.2] - 2026-08-11
 
 ### Added

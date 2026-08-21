@@ -1,6 +1,6 @@
 # livesync-hyperclay
 
-Stateless utility module for managing SSE client connections. Used by hyperclay and hyperclay-local for real-time collaborative editing.
+Stateless utility module for managing SSE client connections. Used by Hyperclay™ and Hyperclay Local for real-time collaborative editing.
 
 ## Features
 
