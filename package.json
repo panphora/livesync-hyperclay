@@ -1,6 +1,6 @@
 {
   "name": "livesync-hyperclay",
-  "version": "0.14.2",
+  "version": "0.14.3",
   "description": "Stateless utility for managing SSE client connections - subscribe/unsubscribe/broadcast",
   "main": "index.js",
   "scripts": {

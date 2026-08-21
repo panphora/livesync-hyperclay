@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.3] - 2026-08-21
+
+### Changed
+- Updated livesync-hyperclay
+
+
+
 ## [Unreleased]
 
 ### Changed
