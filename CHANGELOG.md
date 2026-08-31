@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0] - 2026-08-30
+
+### Added
+- `broadcast` forwards an optional `etag` on the payload, the way it already forwards
+  `identityMap`: attached only when defined, so the wire stays byte-identical for a sender
+  that does not send one.
+
+  This is the version stamp of what a host stored (Malleable HTML File spec §6). It rides ON
+  a content frame and can never travel alone, because `broadcast` refuses a payload whose
+  `html` is not a string. That is deliberate and it is the point: a receiver may only adopt a
+  stamp as part of applying the content that stamp describes. A stamp arriving by itself would
+  tell a tab it is in step with disk without giving it the bytes to be in step with, and its
+  next save would then overwrite a save it had never received.
+
 ## [0.14.3] - 2026-08-21
 
 ### Changed

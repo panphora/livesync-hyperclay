@@ -128,6 +128,12 @@ const liveSync = {
    * @param {string} data.sender - Client ID or 'file-system'
    * @param {Object} [data.identityMap] - Optional opaque element-identity map
    *   from the sender. Forwarded as-is to receivers; older clients ignore it.
+   * @param {string} [data.etag] - Optional version stamp of what the host stored
+   *   for the document these bytes were saved as (spec §6). It rides ON the
+   *   content frame and never alone: a receiver may only adopt a stamp as part of
+   *   applying the content that stamp describes, or it asserts "you are in step
+   *   with disk" about bytes it has not got. Forwarded as-is; older clients
+   *   ignore it.
    * @param {Object} [options]
    * @param {'live'|'saved'|'all'} [options.lane='live'] - Which lane receives
    *   this payload. Pre-strip snapshots must stay on 'live' (the default);
@@ -135,7 +141,7 @@ const liveSync = {
    *   anyone who can view the page may go there — on-disk HTML from the save
    *   seams, or an owner's {document} relay. Never [no-save] runtime content.
    */
-  broadcast(file, { html, sender, identityMap }, { lane = 'live' } = {}) {
+  broadcast(file, { html, sender, identityMap, etag }, { lane = 'live' } = {}) {
     const subscribers = clients.get(file);
     console.log(`[LiveSync] Broadcasting to "${file}" (lane=${lane}): ${subscribers?.size || 0} subscriber(s), sender=${sender}`);
 
@@ -149,10 +155,11 @@ const liveSync = {
       return;
     }
 
-    // Only attach identityMap when defined — keeps the wire byte-identical
+    // Only attach the optional fields when defined — keeps the wire byte-identical
     // to today's payload for senders that haven't been updated.
     const payload = { html, sender, seq: nextSeq() };
     if (identityMap !== undefined) payload.identityMap = identityMap;
+    if (etag !== undefined) payload.etag = etag;
 
     const total = subscribers.size;
     const message = `data: ${JSON.stringify(payload)}\n\n`;

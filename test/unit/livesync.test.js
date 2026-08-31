@@ -133,6 +133,62 @@ describe('broadcast forwards identityMap when present', () => {
   });
 });
 
+// Spec §6, the version stamp. It rides ON a content frame and never alone, because a
+// receiver may only adopt a stamp as part of applying the content that stamp describes.
+// This package's job is to carry it, unread: nothing here computes or checks a stamp.
+describe('broadcast forwards etag when present', () => {
+  test('etag is included in the SSE payload when defined', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:etag.html', res);
+    liveSync.broadcast('t:etag.html', {
+      html: '<p>saved</p>',
+      sender: 'A',
+      etag: 'e-17'
+    });
+    const msg = parseSSE(res.writes[0]);
+    expect(msg.etag).toBe('e-17');
+    expect(msg.html).toBe('<p>saved</p>');
+    liveSync.unsubscribe('t:etag.html', res);
+  });
+
+  test('etag is absent (not undefined) when not provided', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:etag-absent.html', res);
+    liveSync.broadcast('t:etag-absent.html', { html: 'x', sender: 'A' });
+    const raw = res.writes[0];
+    expect(raw).not.toContain('etag');
+    const msg = parseSSE(raw);
+    expect('etag' in msg).toBe(false);
+    liveSync.unsubscribe('t:etag-absent.html', res);
+  });
+
+  test('etag rides alongside identityMap without displacing it', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:etag-both.html', res);
+    liveSync.broadcast('t:etag-both.html', {
+      html: 'x',
+      sender: 'A',
+      identityMap: { '': 'A:1' },
+      etag: 'e-18'
+    });
+    const msg = parseSSE(res.writes[0]);
+    expect(msg.identityMap).toEqual({ '': 'A:1' });
+    expect(msg.etag).toBe('e-18');
+    liveSync.unsubscribe('t:etag-both.html', res);
+  });
+
+  // The reason the etag-only frame this replaces was never delivered: broadcast
+  // refuses a payload with no document in it, and always has. A stamp with no
+  // content is exactly that payload, so a host sending one is talking to nobody.
+  test('a stamp with no html is still refused, so it can never travel alone', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:etag-alone.html', res);
+    liveSync.broadcast('t:etag-alone.html', { sender: 'A', etag: 'e-19' });
+    expect(res.writes).toHaveLength(0);
+    liveSync.unsubscribe('t:etag-alone.html', res);
+  });
+});
+
 describe('broadcast refuses bad input', () => {
   test('non-string html is refused', () => {
     const res = mockRes();
