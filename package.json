@@ -6,8 +6,7 @@
   "scripts": {
     "test": "jest && ./test/test-server.sh",
     "test:unit": "jest",
-    "test:integration": "./test/test-server.sh",
-    "release": "./scripts/release.sh"
+    "test:integration": "./test/test-server.sh"
   },
   "keywords": [
     "livesync",
