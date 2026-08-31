@@ -177,6 +177,31 @@ describe('broadcast forwards etag when present', () => {
     liveSync.unsubscribe('t:etag-both.html', res);
   });
 
+  // Spec §10: the stamp tells a tab which version its next save is answering, and
+  // the saved lane is viewers, who make no saves. Carrying it there hands a stamp
+  // to a page that cannot have earned it. Asserted through a real subscriber, not
+  // through the call, because a payload field dropped between here and the wire is
+  // exactly the failure this package shipped once already.
+  test('the stamp rides the live lane and is withheld from the saved lane', () => {
+    const editor = mockRes();
+    const viewer = mockRes();
+    liveSync.subscribe('t:etag-lanes.html', editor, { lane: 'live' });
+    liveSync.subscribe('t:etag-lanes.html', viewer, { lane: 'saved' });
+
+    liveSync.broadcast('t:etag-lanes.html', { html: '<p>x</p>', sender: 'A', etag: 'e-20' },
+      { lane: 'live' });
+    liveSync.broadcast('t:etag-lanes.html', { html: '<p>x</p>', sender: 'A', etag: 'e-20' },
+      { lane: 'saved' });
+
+    expect(parseSSE(editor.writes[0]).etag).toBe('e-20');
+    const toViewer = parseSSE(viewer.writes[0]);
+    expect(toViewer.html).toBe('<p>x</p>');
+    expect('etag' in toViewer).toBe(false);
+
+    liveSync.unsubscribe('t:etag-lanes.html', editor);
+    liveSync.unsubscribe('t:etag-lanes.html', viewer);
+  });
+
   // The reason the etag-only frame this replaces was never delivered: broadcast
   // refuses a payload with no document in it, and always has. A stamp with no
   // content is exactly that payload, so a host sending one is talking to nobody.

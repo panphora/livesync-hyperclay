@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.1] - 2026-08-31
+
+### Fixed
+- `broadcast` forwards `etag` on the `live` lane only. The saved lane is viewers, and a
+  viewer holds a whole document rather than a pre-strip snapshot and makes no saves, so a
+  stamp there is a version claim handed to a page that can never have earned it. 0.15.0
+  attached it to whichever lane the caller named. Nothing else changes: the field is still
+  attached only when defined, and still only ever alongside content.
+
 ## [0.15.0] - 2026-08-30
 
 ### Added

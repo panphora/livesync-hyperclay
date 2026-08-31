@@ -159,7 +159,14 @@ const liveSync = {
     // to today's payload for senders that haven't been updated.
     const payload = { html, sender, seq: nextSeq() };
     if (identityMap !== undefined) payload.identityMap = identityMap;
-    if (etag !== undefined) payload.etag = etag;
+
+    // Spec §10: the stamp rides the editor lane only. A viewer holds a whole document
+    // rather than a pre-strip snapshot and makes no saves, so it has no version to
+    // answer for and a stamp there is at best noise and at worst a claim about bytes
+    // the viewer does not hold. Enforced here rather than trusted to each caller:
+    // every host has to remember the same rule otherwise, and one that forgets it
+    // leaks the stamp with nothing failing.
+    if (etag !== undefined && lane === 'live') payload.etag = etag;
 
     const total = subscribers.size;
     const message = `data: ${JSON.stringify(payload)}\n\n`;
