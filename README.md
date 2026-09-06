@@ -88,7 +88,59 @@ allowed to wedge the teardown.
 
 User-level channels (`subscribeUser`) are not file channels and do not fire it.
 
-### `liveSync.broadcast(file, { html, sender, identityMap }, { lane } = {})`
+### `liveSync.closeWhere(file, predicate)`
+
+End exactly the connections on a file channel whose metadata matches, leaving
+the rest receiving. Returns the number of responses closed. Connection
+lifecycle only: the caller owns the access decision and writes it as a
+predicate over the `meta` it stored at subscribe time.
+
+```javascript
+liveSync.closeWhere(key, m => m.personId === id);                     // that person, every tab
+liveSync.closeWhere(key, m => m.personId === id && m.lane === 'live'); // their editing tabs only
+liveSync.closeWhere(key, m => m.shareLinkId === id);                   // a revoked link's guests
+```
+
+**A connection with no metadata never matches, and the predicate is not called
+for it.** It carries nothing to identify it by, so it keeps receiving.
+`meta` is optional and hyperclay-local passes none at all, so this is what
+keeps the natural predicate form `m => m.personId === id` from throwing on one
+and `m => !m.canView` from silently closing every one of them. To end every
+stream on a file regardless, use `closeChannel`.
+
+Matching runs over the whole channel before anything closes, so a predicate
+that throws leaves the channel exactly as it found it. Every close goes
+through the same removal path as `unsubscribe`, so `onRemove` fires once per
+departure.
+
+### `liveSync.writeEvent(file, name, build)`
+
+Write a **named** SSE event to a file channel, built per recipient. `build` is
+called once per connection as `build({ lane, meta })` and returns that
+connection's payload, or `null` to send it nothing at all. Returns the number
+of connections written to.
+
+```javascript
+liveSync.writeEvent(key, 'presence', ({ meta }) => (
+  meta?.canView ? { people, anonymous: 0 } : { people: [], anonymous: total }
+));
+```
+
+`broadcast` and `notify` serialize one message for everyone, so neither can
+answer "what may this particular connection be told". That is the whole reason
+this exists.
+
+Every frame it writes carries its `event:` field. That matters more than it
+looks: every connection on a channel receives this whether or not it listens
+for the name, and a frame written without its name lands on a client's default
+`onmessage` handler, which reads a frame as a document. The name is therefore
+refused rather than defaulted — it must be a non-empty string with no newline.
+
+Nothing is added to the payload; what `build` returns is what goes on the wire.
+A connection whose write throws is dropped the same way every other write drops
+one, firing `onRemove`.
+
+### `liveSync.broadcast(file, { html, sender, identityMap, etag, by }, { lane } = {})`
 
 Send an update to all clients subscribed to a file.
 
@@ -98,6 +150,13 @@ Send an update to all clients subscribed to a file.
 - `identityMap` - Optional opaque element-identity map, forwarded as-is.
   Omitted entirely when undefined, so the wire stays byte-identical for
   senders that don't set it.
+- `etag` - Optional version stamp of what the host stored for these bytes.
+  Forwarded as-is, **on the `'live'` lane only**.
+- `by` - Optional opaque author stamp for this frame, forwarded as-is,
+  **on the `'live'` lane only**. The saved lane carries whole documents to
+  whoever may view the page, which on a public document is anyone; an author
+  there names the writer to a stranger. Enforced here rather than left to each
+  caller.
 - `lane` - `'live'` (default), `'saved'`, or `'all'`. Pre-strip snapshots
   must stay on `'live'`; only post-strip on-disk HTML may go to `'saved'`
   or `'all'`.
@@ -126,6 +185,9 @@ The user-level and node-level broadcast surface is not documented here yet:
 `broadcastNodeRenamed`, `broadcastNodeMoved`, `broadcastNodeDeleted`,
 `notify`, `broadcastCollectionRecord`, `closeChannel`, `markBrowserSave`,
 and `wasBrowserSave`. See the JSDoc in `index.js` for their signatures.
+
+`closeChannel(file)` ends every stream on a channel and drops it; it is the
+blunt instrument `closeWhere` refines.
 
 ## Integration
 

@@ -214,6 +214,99 @@ describe('broadcast forwards etag when present', () => {
   });
 });
 
+// The author stamp: the host's own answer about who made an authorized relay,
+// carried unread. Same lane rule as the etag above and for a sharper reason —
+// the saved lane reaches whoever may view the page, which on a public document
+// is anyone, and an author there names the writer to a stranger.
+describe('broadcast forwards by on the live lane only', () => {
+  test('by is included in the SSE payload when defined', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:by.html', res);
+    liveSync.broadcast('t:by.html', {
+      html: '<p>x</p>',
+      sender: 'A',
+      by: { id: 'p-abc', name: 'Dana' }
+    });
+    const msg = parseSSE(res.writes[0]);
+    expect(msg.by).toEqual({ id: 'p-abc', name: 'Dana' });
+    liveSync.unsubscribe('t:by.html', res);
+  });
+
+  test('by is absent (not undefined) when not provided', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:by-absent.html', res);
+    liveSync.broadcast('t:by-absent.html', { html: 'x', sender: 'A' });
+    const raw = res.writes[0];
+    expect(raw).not.toContain('by');
+    expect('by' in parseSSE(raw)).toBe(false);
+    liveSync.unsubscribe('t:by-absent.html', res);
+  });
+
+  test('the stamp rides the live lane and is withheld from the saved lane', () => {
+    const editor = mockRes();
+    const viewer = mockRes();
+    liveSync.subscribe('t:by-lanes.html', editor, { lane: 'live' });
+    liveSync.subscribe('t:by-lanes.html', viewer, { lane: 'saved' });
+
+    liveSync.broadcast('t:by-lanes.html', { html: '<p>x</p>', sender: 'A', by: { id: 'p1', name: 'Dana' } },
+      { lane: 'live' });
+    liveSync.broadcast('t:by-lanes.html', { html: '<p>x</p>', sender: 'A', by: { id: 'p1', name: 'Dana' } },
+      { lane: 'saved' });
+
+    expect(parseSSE(editor.writes[0]).by).toEqual({ id: 'p1', name: 'Dana' });
+    const toViewer = parseSSE(viewer.writes[0]);
+    expect(toViewer.html).toBe('<p>x</p>');
+    expect('by' in toViewer).toBe(false);
+    expect(viewer.writes[0]).not.toContain('Dana');
+
+    liveSync.unsubscribe('t:by-lanes.html', editor);
+    liveSync.unsubscribe('t:by-lanes.html', viewer);
+  });
+
+  // 'all' reaches the saved lane too, so it is a saved-lane frame as far as this
+  // rule is concerned, exactly as it already is for the etag.
+  test('lane all carries no stamp, because it reaches viewers', () => {
+    const editor = mockRes();
+    const viewer = mockRes();
+    liveSync.subscribe('t:by-all.html', editor, { lane: 'live' });
+    liveSync.subscribe('t:by-all.html', viewer, { lane: 'saved' });
+
+    liveSync.broadcast('t:by-all.html', { html: 'x', sender: 'A', by: { id: 'p1', name: 'Dana' } },
+      { lane: 'all' });
+
+    expect('by' in parseSSE(editor.writes[0])).toBe(false);
+    expect('by' in parseSSE(viewer.writes[0])).toBe(false);
+
+    liveSync.unsubscribe('t:by-all.html', editor);
+    liveSync.unsubscribe('t:by-all.html', viewer);
+  });
+
+  test('by rides alongside etag and identityMap without displacing them', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:by-both.html', res);
+    liveSync.broadcast('t:by-both.html', {
+      html: 'x',
+      sender: 'A',
+      identityMap: { '': 'A:1' },
+      etag: 'e-21',
+      by: { id: 'p1', name: 'Dana' }
+    });
+    const msg = parseSSE(res.writes[0]);
+    expect(msg.identityMap).toEqual({ '': 'A:1' });
+    expect(msg.etag).toBe('e-21');
+    expect(msg.by).toEqual({ id: 'p1', name: 'Dana' });
+    liveSync.unsubscribe('t:by-both.html', res);
+  });
+
+  test('a stamp with no html is refused, so an author can never travel alone', () => {
+    const res = mockRes();
+    liveSync.subscribe('t:by-alone.html', res);
+    liveSync.broadcast('t:by-alone.html', { sender: 'A', by: { id: 'p1', name: 'Dana' } });
+    expect(res.writes).toHaveLength(0);
+    liveSync.unsubscribe('t:by-alone.html', res);
+  });
+});
+
 describe('broadcast refuses bad input', () => {
   test('non-string html is refused', () => {
     const res = mockRes();

@@ -225,6 +225,9 @@ const liveSync = {
    *   applying the content that stamp describes, or it asserts "you are in step
    *   with disk" about bytes it has not got. Forwarded as-is; older clients
    *   ignore it.
+   * @param {Object} [data.by] - Optional opaque author stamp for this frame, the
+   *   host's own answer about who made the relay. Forwarded as-is and never read
+   *   here. Live lane only, like `etag`: see below.
    * @param {Object} [options]
    * @param {'live'|'saved'|'all'} [options.lane='live'] - Which lane receives
    *   this payload. Pre-strip snapshots must stay on 'live' (the default);
@@ -232,7 +235,7 @@ const liveSync = {
    *   anyone who can view the page may go there — on-disk HTML from the save
    *   seams, or an owner's {document} relay. Never [no-save] runtime content.
    */
-  broadcast(file, { html, sender, identityMap, etag }, { lane = 'live' } = {}) {
+  broadcast(file, { html, sender, identityMap, etag, by }, { lane = 'live' } = {}) {
     const subscribers = clients.get(file);
     console.log(`[LiveSync] Broadcasting to "${file}" (lane=${lane}): ${subscribers?.size || 0} subscriber(s), sender=${sender}`);
 
@@ -258,6 +261,14 @@ const liveSync = {
     // every host has to remember the same rule otherwise, and one that forgets it
     // leaks the stamp with nothing failing.
     if (etag !== undefined && lane === 'live') payload.etag = etag;
+
+    // Same rule, same reason, one envelope over. The live lane is the editing lane;
+    // the saved lane carries whole documents to whoever may view the page, which on
+    // a public document is anyone at all. An author on a saved-lane frame tells a
+    // stranger who wrote the document they are reading. Enforced here rather than
+    // trusted to each caller, because a host that forgets the rule leaks the name
+    // with nothing failing.
+    if (by !== undefined && lane === 'live') payload.by = by;
 
     const total = subscribers.size;
     const message = `data: ${JSON.stringify(payload)}\n\n`;
@@ -544,6 +555,66 @@ const liveSync = {
   },
 
   /**
+   * Write a NAMED SSE event to a file channel, built per recipient. `build` is
+   * called once per connection as build({ lane, meta }) and returns that
+   * connection's payload, or null to send it nothing at all. broadcast() and
+   * notify() serialize one message for everyone, so neither can answer a
+   * question like "what may this particular connection be told", which is the
+   * whole reason this exists.
+   *
+   * Every frame it writes carries its `event:` field, and that is the invariant,
+   * not a detail: every connection on a channel is in the roster whether or not
+   * it can parse the event, so an old tab, a hyperclayjs tab and a collection
+   * dashboard all receive this and none of them listens for it. A frame written
+   * without its name lands on their default onmessage handler, which reads a
+   * frame as a document. A connection with no listener for the name must
+   * therefore receive no bare `data:` line for it — the name is refused rather
+   * than defaulted, so there is no path that writes one.
+   *
+   * Nothing is added to the payload: what `build` returns is what goes on the
+   * wire, unread. Failure semantics match writeToAll — a connection whose write
+   * throws leaves through _remove, so it fires onRemove like any other departure.
+   *
+   * @param {string} file - Full identity key — same shape as subscribe()
+   * @param {string} name - SSE event name. Non-empty, no newline.
+   * @param {(info: { lane: 'live'|'saved', meta: any }) => any} build - the
+   *   payload for this connection, or null/undefined to skip it entirely.
+   * @returns {number} connections written to
+   */
+  writeEvent(file, name, build) {
+    if (typeof name !== 'string' || name === '' || /[\r\n]/.test(name)) {
+      throw new TypeError('[LiveSync] writeEvent expects a non-empty event name with no newline');
+    }
+    if (typeof build !== 'function') {
+      throw new TypeError('[LiveSync] writeEvent expects a build function');
+    }
+    const subscribers = clients.get(file);
+    if (!subscribers?.size) return 0;
+
+    const dead = [];
+    let sent = 0;
+    // A snapshot, because build() is consumer code and may subscribe or remove
+    // as it goes; a connection it removed is skipped rather than written to.
+    for (const res of Array.from(subscribers)) {
+      if (!subscribers.has(res)) continue;
+      const payload = build({ lane: laneOf(res), meta: subscriberMeta.get(res) });
+      if (payload === null || payload === undefined) continue;
+      try {
+        res.write(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`);
+        sent++;
+      } catch (e) {
+        console.log(`[LiveSync] Failed to write (${name} ${file}):`, e.message);
+        dead.push(res);
+      }
+    }
+    for (const res of dead) {
+      _remove(file, res);
+    }
+    console.log(`[LiveSync] Sent "${name}" to ${sent} subscriber(s) on "${file}"`);
+    return sent;
+  },
+
+  /**
    * Force-close every SSE response on a channel and drop the channel.
    * Connection-lifecycle only — the caller owns any auth decision. The platform
    * uses this to disconnect viewers when a share is revoked: each viewer's
@@ -571,6 +642,71 @@ const liveSync = {
       }
     }
     console.log(`[LiveSync] Closed channel "${file}": ${closed} stream(s)`);
+    return closed;
+  },
+
+  /**
+   * Force-close exactly the connections on a channel whose metadata matches,
+   * leaving the rest receiving. Connection-lifecycle only, like closeChannel:
+   * the caller owns the access decision and expresses it as a predicate over the
+   * metadata it stored at subscribe time. Each closed viewer's EventSource then
+   * reconnects, re-runs the route's auth, and fails closed if it should.
+   *
+   * There is deliberately no reverse index from metadata to connections. A
+   * per-file channel is a few dozen connections and this scans it; an index over
+   * the three teardown paths is the thing that goes stale, and a stale index
+   * closes nothing while reporting success.
+   *
+   * **A connection with no metadata never matches, and the predicate is not
+   * called for it.** closeWhere selects by what a connection carries, and one
+   * carrying nothing cannot be identified as the person or the link being closed,
+   * so it keeps receiving. This is a decision, not an accident: `meta` is
+   * optional, hyperclay-local passes none at all, and predicates are written in
+   * the natural form `m => m.personId === id`, which throws on a meta-less
+   * connection and, in the form `m => !m.canView`, would silently close every one
+   * of them. A caller that means "end every stream on this file" has
+   * closeChannel.
+   *
+   * The scan runs before anything is closed, so a predicate that throws leaves
+   * the channel exactly as it found it and the error reaches the caller intact.
+   * Every removal goes through _remove, so onRemove fires once per departure.
+   *
+   * @param {string} file - Full identity key — same shape as subscribe()
+   * @param {(meta: any) => boolean} predicate - called with the connection's own
+   *   `meta`, never with undefined
+   * @returns {number} responses closed
+   */
+  closeWhere(file, predicate) {
+    if (typeof predicate !== 'function') {
+      throw new TypeError('[LiveSync] closeWhere expects a predicate function');
+    }
+    const subscribers = clients.get(file);
+    if (!subscribers?.size) return 0;
+
+    const total = subscribers.size;
+    const doomed = [];
+    for (const res of Array.from(subscribers)) {
+      const meta = subscriberMeta.get(res);
+      if (meta === undefined || meta === null) continue;
+      if (predicate(meta)) doomed.push(res);
+    }
+
+    // Same order as closeChannel: leave the channel first, one connection at a
+    // time, then end them. Each res's own close handler then finds nothing and
+    // fires no second onRemove.
+    for (const res of doomed) {
+      _remove(file, res);
+    }
+    let closed = 0;
+    for (const res of doomed) {
+      try {
+        res.end();
+        closed++;
+      } catch (e) {
+        console.log(`[LiveSync] closeWhere failed for "${file}":`, e.message);
+      }
+    }
+    console.log(`[LiveSync] Closed ${closed} of ${total} stream(s) on "${file}"`);
     return closed;
   },
 

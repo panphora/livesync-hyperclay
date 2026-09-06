@@ -1,5 +1,69 @@
 # Changelog
 
+## [0.16.0] - 2026-09-06
+
+Everything a host needs to answer "who is on this document, and which of them
+should stop receiving", without this package learning what a person is. It
+stores facts the caller hands it and hands them back unread; the caller decides.
+
+### Added
+- `subscribe(file, res, { lane, meta })` stores an **opaque** `meta` against the
+  connection, and `subscribers(file)` iterates `{ res, lane, meta }` over a
+  snapshot, so a consumer may remove connections as it walks. Nothing here reads
+  `meta`. Passing none is not an error: a caller that ignores it behaves exactly
+  as before.
+- `onRemove(handler)` fires `handler(file, { lane, meta })` once for every
+  connection that leaves a file channel, whichever path removed it. Returns a
+  function that unregisters it. A handler that throws is logged and skipped
+  rather than allowed to wedge a teardown.
+- `closeWhere(file, predicate)` ends exactly the connections whose metadata
+  matches and leaves the rest receiving, which is what a demotion needs: closing
+  someone's editing tabs must not close the tabs they are still allowed to read
+  from. Matching runs over the whole channel before anything closes, so a
+  predicate that throws leaves it as it found it. There is deliberately no
+  reverse index from metadata to connections: a per-file channel is a few dozen
+  connections and this scans it, whereas an index is the thing that goes stale.
+
+  **A connection carrying no metadata never matches, and the predicate is not
+  called for it.** `meta` is optional and hyperclay-local passes none, so
+  otherwise the natural predicate form `m => m.personId === id` throws on one,
+  and `m => !m.canView` silently closes every one of them. `closeChannel`
+  remains the way to end every stream on a file.
+- `writeEvent(file, name, build)` writes a **named** SSE event built per
+  recipient: `build({ lane, meta })` returns that connection's payload, or
+  `null` to send it nothing. `broadcast` serializes one message for everyone and
+  so cannot answer "what may this particular connection be told".
+
+  Every frame it writes carries its `event:` field, and the name is refused
+  rather than defaulted, so there is no path that writes a bare `data:` line.
+  Every connection on a channel receives these frames whether or not it listens
+  for the name, and one written without its name lands on a client's default
+  `onmessage` handler, which reads a frame as a document.
+- `broadcast` forwards an optional opaque `by` author stamp, on the `'live'`
+  lane only, beside the same rule for `etag`. The saved lane carries whole
+  documents to whoever may view the page, which on a public document is anyone,
+  so an author on a saved-lane frame names the writer to a stranger. Enforced
+  here rather than left to each caller, because a host that forgets the rule
+  leaks the name with nothing failing.
+
+### Changed
+- One internal removal path. A connection used to leave a channel three
+  different ways — `unsubscribe`, `closeChannel`, and a write that threw, which
+  deleted straight out of the Set without the request's own `close` handler ever
+  firing. They now all go through one function, so `onRemove` sees every
+  departure, **including the dropped-write one**, and sees it exactly once:
+  membership in the channel is the record of "still here", so the `unsubscribe`
+  a server runs after `closeChannel` ended a response fires nothing further.
+- `writeToAll` takes an options object `{ lane, file }` rather than a bare lane.
+  `file` is the channel key a dropped connection leaves through, and is `null`
+  for user-level channels, which are not file channels and keep their direct Set
+  delete.
+
+### Fixed
+- A failed write that took the last connection on a channel left the empty
+  channel behind in the map forever. It now drops with its last connection, the
+  same as an unsubscribe.
+
 ## [0.15.1] - 2026-08-31
 
 ### Fixed
