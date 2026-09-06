@@ -33,6 +33,52 @@ function laneOf(res) {
   return subscriberLanes.get(res) || 'live';
 }
 
+// Opaque per-connection metadata, handed in at subscribe time and handed back
+// unread by subscribers() and the onRemove hook. The library never looks inside
+// it: hyperclay stores who a connection belongs to, hyperclay-local stores
+// nothing. Left in place when a connection leaves, exactly like the lane above —
+// both maps are keyed on the response and clear themselves when it is collected.
+// Structure: WeakMap<response, any>
+const subscriberMeta = new WeakMap();
+
+// Handlers registered through onRemove(), fired once per connection that leaves
+// a file channel, by whichever teardown path removed it.
+// Structure: Set<(file, { lane, meta }) => void>
+const removeHandlers = new Set();
+
+/**
+ * The one place a connection leaves a file channel. All three teardown paths go
+ * through here — unsubscribe(), closeChannel(), and writeToAll's dead-drop — so
+ * a consumer watching onRemove sees every departure, including the one that
+ * never fires the request's own close handler: a write that threw.
+ *
+ * Membership in the channel Set is the record of whether a connection is still
+ * here, which makes this idempotent. That is what "exactly once" rests on:
+ * closeChannel ends a response, and the real server then fires that request's
+ * close handler, which calls unsubscribe for a connection already gone.
+ *
+ * @param {string} file - Full identity key — same shape as subscribe()
+ * @param {ServerResponse} res
+ * @returns {boolean} true when this call is the one that removed the connection
+ */
+function _remove(file, res) {
+  const subscribers = clients.get(file);
+  if (!subscribers?.has(res)) return false;
+  subscribers.delete(res);
+  if (subscribers.size === 0) {
+    clients.delete(file);
+  }
+  const info = { lane: laneOf(res), meta: subscriberMeta.get(res) };
+  for (const handler of removeHandlers) {
+    try {
+      handler(file, info);
+    } catch (e) {
+      console.log(`[LiveSync] onRemove handler threw for "${file}":`, e.message);
+    }
+  }
+  return true;
+}
+
 // Track SSE connections per user (for sync engine subscriptions)
 // Structure: Map<username, Set<response>>
 const userClients = new Map();
@@ -63,9 +109,15 @@ function nextSeq() {
  * @param {Set<ServerResponse>} subscribers
  * @param {string} message - pre-serialized SSE frame
  * @param {string} label - short identifier for logs (e.g. "broadcast blog/post.html")
- * @param {'live'|'saved'|'all'} [lane='live'] - which lane to write to
+ * @param {Object} [options]
+ * @param {'live'|'saved'|'all'} [options.lane='live'] - which lane to write to
+ * @param {string|null} [options.file=null] - the channel key `subscribers`
+ *   belongs to, when it is a file channel. A connection dropped here then leaves
+ *   through _remove like every other teardown. User-level channels pass none and
+ *   drop theirs from the Set directly. Passed in rather than recovered by
+ *   scanning `clients`: the caller already holds the key.
  */
-function writeToAll(subscribers, message, label, lane = 'live') {
+function writeToAll(subscribers, message, label, { lane = 'live', file = null } = {}) {
   if (!subscribers?.size) return 0;
   const dead = [];
   let sent = 0;
@@ -79,7 +131,13 @@ function writeToAll(subscribers, message, label, lane = 'live') {
       dead.push(res);
     }
   }
-  dead.forEach(res => subscribers.delete(res));
+  for (const res of dead) {
+    if (file === null) {
+      subscribers.delete(res);
+    } else {
+      _remove(file, res);
+    }
+  }
   return sent;
 }
 
@@ -96,13 +154,18 @@ const liveSync = {
    * @param {'live'|'saved'} [options.lane='live'] - 'saved' subscribes a
    *   view-mode tab that only receives post-strip on-disk HTML. The caller
    *   owns the auth decision per lane.
+   * @param {any} [options.meta] - Opaque metadata stored against this
+   *   connection and handed back, unread, by subscribers() and the onRemove
+   *   hook. The library never inspects it. Optional: its absence is not an
+   *   error, and a caller that passes none behaves exactly as before.
    */
-  subscribe(file, res, { lane = 'live' } = {}) {
+  subscribe(file, res, { lane = 'live', meta } = {}) {
     if (!clients.has(file)) {
       clients.set(file, new Set());
     }
     clients.get(file).add(res);
     subscriberLanes.set(res, lane === 'saved' ? 'saved' : 'live');
+    subscriberMeta.set(res, meta);
     console.log(`[LiveSync] Subscribed to "${file}" (lane=${laneOf(res)}), now ${clients.get(file).size} subscriber(s)`);
   },
 
@@ -112,12 +175,40 @@ const liveSync = {
    * @param {ServerResponse} res - Express response object
    */
   unsubscribe(file, res) {
-    clients.get(file)?.delete(res);
+    _remove(file, res);
     const remaining = clients.get(file)?.size || 0;
     console.log(`[LiveSync] Unsubscribed from "${file}", ${remaining} subscriber(s) remaining`);
-    if (remaining === 0) {
-      clients.delete(file);
+  },
+
+  /**
+   * Iterate the connections currently on a file channel.
+   * @param {string} file - Full identity key — same shape as subscribe()
+   * @yields {{ res: ServerResponse, lane: 'live'|'saved', meta: any }}
+   */
+  *subscribers(file) {
+    const set = clients.get(file);
+    if (!set) return;
+    // Iterate a snapshot: a consumer may remove connections as it goes.
+    for (const res of Array.from(set)) {
+      yield { res, lane: laneOf(res), meta: subscriberMeta.get(res) };
     }
+  },
+
+  /**
+   * Register a handler fired once for every connection that leaves a file
+   * channel, whichever path removed it: unsubscribe(), closeChannel(), or a
+   * write that threw. Called as handler(file, { lane, meta }) with the meta the
+   * connection subscribed with. A handler that throws is logged and skipped, so
+   * one bad consumer cannot wedge a teardown.
+   * @param {(file: string, info: { lane: 'live'|'saved', meta: any }) => void} handler
+   * @returns {() => void} call to unregister
+   */
+  onRemove(handler) {
+    if (typeof handler !== 'function') {
+      throw new TypeError('[LiveSync] onRemove expects a function');
+    }
+    removeHandlers.add(handler);
+    return () => removeHandlers.delete(handler);
   },
 
   /**
@@ -170,7 +261,7 @@ const liveSync = {
 
     const total = subscribers.size;
     const message = `data: ${JSON.stringify(payload)}\n\n`;
-    const sent = writeToAll(subscribers, message, `broadcast ${file}`, lane);
+    const sent = writeToAll(subscribers, message, `broadcast ${file}`, { lane, file });
     console.log(`[LiveSync] Sent to ${sent}/${total} subscribers`);
   },
 
@@ -424,7 +515,7 @@ const liveSync = {
 
     const total = subscribers.size;
     const message = `data: ${JSON.stringify(payload)}\n\n`;
-    const sent = writeToAll(subscribers, message, `notify ${file}`, lane);
+    const sent = writeToAll(subscribers, message, `notify ${file}`, { lane, file });
     console.log(`[LiveSync] Notification sent to ${sent}/${total} subscribers`);
   },
 
@@ -449,7 +540,7 @@ const liveSync = {
     if (op !== 'delete') payload.data = data;
     const message = `event: collection-record\ndata: ${JSON.stringify(payload)}\n\n`;
     // Live lane only — dashboards subscribe without a lane and land on 'live'.
-    return writeToAll(subscribers, message, `collection-record ${file} ${id}`);
+    return writeToAll(subscribers, message, `collection-record ${file} ${id}`, { file });
   },
 
   /**
@@ -463,11 +554,15 @@ const liveSync = {
   closeChannel(file) {
     const subscribers = clients.get(file);
     if (!subscribers?.size) return 0;
-    // Clear the channel first so each res's own close handler (which calls
-    // unsubscribe) is a harmless no-op while we end the connections.
-    clients.delete(file);
+    // Snapshot, then clear the channel one connection at a time through _remove
+    // before ending any of them: each res's own close handler (which calls
+    // unsubscribe) then finds nothing and fires no second onRemove.
+    const doomed = Array.from(subscribers);
+    for (const res of doomed) {
+      _remove(file, res);
+    }
     let closed = 0;
-    for (const res of subscribers) {
+    for (const res of doomed) {
       try {
         res.end();
         closed++;

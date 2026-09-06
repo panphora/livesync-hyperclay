@@ -50,7 +50,7 @@ app.post('/_/live-sync/save', (req, res) => {
 
 ## API
 
-### `liveSync.subscribe(file, res, { lane } = {})`
+### `liveSync.subscribe(file, res, { lane, meta } = {})`
 
 Register an SSE response object to receive updates for a file.
 
@@ -58,10 +58,35 @@ Register an SSE response object to receive updates for a file.
   in hyperclay-local, `{path/name.ext}`. Always includes the extension.
 - `res` - Express response object (SSE connection)
 - `lane` - `'live'` (default), `'saved'`, or `'all'`
+- `meta` - Optional, opaque. Stored against this connection and handed back
+  unread by `subscribers()` and the `onRemove` hook. The library never looks
+  inside it, so a host can put whatever it needs there — who the connection
+  belongs to, what it may see — without this package growing a concept of
+  people. Passing none is not an error.
 
 ### `liveSync.unsubscribe(file, res)`
 
 Remove an SSE response from a file's subscribers.
+
+### `liveSync.subscribers(file)`
+
+Iterate the connections currently on a file channel, yielding
+`{ res, lane, meta }` per connection. An unknown channel yields nothing.
+Iteration walks a snapshot, so a consumer may remove connections as it goes.
+
+### `liveSync.onRemove(handler)`
+
+Register `handler(file, { lane, meta })`, called once for every connection that
+leaves a file channel. Returns a function that unregisters it.
+
+There are three ways to leave and this hook sees all of them: `unsubscribe()`,
+`closeChannel()`, and a write that threw, which drops the connection without
+the request's `close` handler ever firing. Exactly once per connection, so the
+`unsubscribe()` a server runs after `closeChannel()` ends the response fires
+nothing further. A handler that throws is logged and skipped rather than
+allowed to wedge the teardown.
+
+User-level channels (`subscribeUser`) are not file channels and do not fire it.
 
 ### `liveSync.broadcast(file, { html, sender, identityMap }, { lane } = {})`
 
