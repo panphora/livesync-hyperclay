@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1] - 2026-09-19
+
+### Added
+- livesync-hyperclay packed contract
+
+
+
 ## [0.16.0] - 2026-09-06
 
 Everything a host needs to answer "who is on this document, and which of them
