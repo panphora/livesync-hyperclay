@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.17.0] - 2026-09-23
+
+### Added
+- `configure({ frameIds: true })` puts `id: <seq>` on file-channel frames;
+  `onFrame(handler)` taps every file-channel frame, including ones with no
+  subscriber. Defaults unchanged.
+
+
+
 ## [0.16.1] - 2026-09-19
 
 ### Added
