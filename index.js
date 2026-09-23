@@ -100,6 +100,27 @@ function nextSeq() {
   return lastSeq;
 }
 
+// Opt-in frame ids and frame tap for file-channel frames. Both are off by
+// default: a host that never calls configure() or onFrame() gets today's exact
+// bytes. A tap sees every file-channel frame, including one published while
+// nobody is subscribed, which is what a replay store needs to retain it.
+let frameIds = false;
+const frameTaps = new Set();
+
+function withId(seq, body) {
+  return frameIds ? `id: ${seq}\n${body}` : body;
+}
+
+function tapFrame(file, lane, seq, message) {
+  for (const handler of frameTaps) {
+    try {
+      handler({ file, lane, seq, message });
+    } catch (e) {
+      console.error('[LiveSync] frame tap failed:', e);
+    }
+  }
+}
+
 /**
  * Write `message` to every subscriber on the given lane; remove any whose
  * write throws. Returns the count of successful writes. Centralizes
@@ -212,6 +233,32 @@ const liveSync = {
   },
 
   /**
+   * Opt in to extra wire features. Both are off until a host asks for them, so
+   * an untouched caller's frames stay byte-identical.
+   * @param {Object} [options]
+   * @param {boolean} [options.frameIds=false] - prefix every file-channel frame
+   *   with `id: <seq>\n`, so an SSE consumer's lastEventId carries the frame's
+   *   seq. Only `true` enables it.
+   */
+  configure({ frameIds: ids } = {}) {
+    if (ids !== undefined) frameIds = ids === true;
+  },
+
+  /**
+   * Tap every file-channel frame this library publishes, including one written
+   * while nobody was subscribed. handler({ file, lane, seq, message }) is called
+   * with the exact frame string that would go on the wire. A handler that throws
+   * is logged and skipped, so one bad tap cannot stop delivery.
+   * @param {(frame: { file: string, lane: 'live'|'saved', seq: number, message: string }) => void} handler
+   * @returns {() => void} call to unregister
+   */
+  onFrame(handler) {
+    if (typeof handler !== 'function') throw new TypeError('[LiveSync] onFrame expects a function');
+    frameTaps.add(handler);
+    return () => frameTaps.delete(handler);
+  },
+
+  /**
    * Broadcast an update to clients subscribed to a file
    * @param {string} file - Full identity key — same shape as subscribe()
    * @param {Object} data - { html, sender, identityMap? }
@@ -239,13 +286,13 @@ const liveSync = {
     const subscribers = clients.get(file);
     console.log(`[LiveSync] Broadcasting to "${file}" (lane=${lane}): ${subscribers?.size || 0} subscriber(s), sender=${sender}`);
 
-    if (!subscribers?.size) {
-      console.log(`[LiveSync] No subscribers for "${file}", available rooms:`, Array.from(clients.keys()));
+    if (typeof html !== 'string') {
+      console.error(`[LiveSync] Refusing to broadcast non-string html for ${file}`);
       return;
     }
 
-    if (typeof html !== 'string') {
-      console.error(`[LiveSync] Refusing to broadcast non-string html for ${file}`);
+    if (!subscribers?.size && frameTaps.size === 0) {
+      console.log(`[LiveSync] No subscribers for "${file}", available rooms:`, Array.from(clients.keys()));
       return;
     }
 
@@ -270,8 +317,11 @@ const liveSync = {
     // with nothing failing.
     if (by !== undefined && lane === 'live') payload.by = by;
 
+    const message = withId(payload.seq, `data: ${JSON.stringify(payload)}\n\n`);
+    tapFrame(file, lane, payload.seq, message);
+    if (!subscribers?.size) return;
+
     const total = subscribers.size;
-    const message = `data: ${JSON.stringify(payload)}\n\n`;
     const sent = writeToAll(subscribers, message, `broadcast ${file}`, { lane, file });
     console.log(`[LiveSync] Sent to ${sent}/${total} subscribers`);
   },
@@ -507,10 +557,6 @@ const liveSync = {
     const subscribers = clients.get(file);
     console.log(`[LiveSync] Notifying "${file}": ${subscribers?.size || 0} subscriber(s), msgType=${msgType}`);
 
-    if (!subscribers?.size) {
-      return;
-    }
-
     const payload = {
       type: "notification",
       msgType,
@@ -524,8 +570,15 @@ const liveSync = {
       payload.data = data;
     }
 
+    // A notification gains no seq field: the id line carries it, and an old
+    // client that reads the payload still sees exactly today's object.
+    const seq = nextSeq();
+    const message = withId(seq, `data: ${JSON.stringify(payload)}\n\n`);
+    tapFrame(file, lane, seq, message);
+
+    if (!subscribers?.size) return;
+
     const total = subscribers.size;
-    const message = `data: ${JSON.stringify(payload)}\n\n`;
     const sent = writeToAll(subscribers, message, `notify ${file}`, { lane, file });
     console.log(`[LiveSync] Notification sent to ${sent}/${total} subscribers`);
   },
@@ -546,10 +599,12 @@ const liveSync = {
    */
   broadcastCollectionRecord(file, { op, id, data, modifiedAt }) {
     const subscribers = clients.get(file);
-    if (!subscribers?.size) return 0;
+    if (!subscribers?.size && frameTaps.size === 0) return 0;
     const payload = { type: 'collection-record', op, id, modifiedAt, seq: nextSeq() };
     if (op !== 'delete') payload.data = data;
-    const message = `event: collection-record\ndata: ${JSON.stringify(payload)}\n\n`;
+    const message = withId(payload.seq, `event: collection-record\ndata: ${JSON.stringify(payload)}\n\n`);
+    tapFrame(file, 'live', payload.seq, message);
+    if (!subscribers?.size) return 0;
     // Live lane only — dashboards subscribe without a lane and land on 'live'.
     return writeToAll(subscribers, message, `collection-record ${file} ${id}`, { file });
   },
@@ -574,6 +629,9 @@ const liveSync = {
    * Nothing is added to the payload: what `build` returns is what goes on the
    * wire, unread. Failure semantics match writeToAll — a connection whose write
    * throws leaves through _remove, so it fires onRemove like any other departure.
+   *
+   * A frame built per recipient is neither given an `id:` line nor handed to
+   * onFrame's taps: there is no single frame to tap and no single seq to name it.
    *
    * @param {string} file - Full identity key — same shape as subscribe()
    * @param {string} name - SSE event name. Non-empty, no newline.
