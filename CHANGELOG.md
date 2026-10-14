@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.0] - 2026-10-14
+
+### Added
+- `writeEvent` accepts a `quiet` option
+- `writeEvent` accepts opt-in backpressure limits
+
+
+
 ## [Unreleased]
 
 ### Added
