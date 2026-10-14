@@ -283,3 +283,18 @@ describe('writeEvent refuses a name it cannot write', () => {
     expect(() => liveSync.writeEvent('t:we/badbuild.html', 'presence')).toThrow(TypeError);
   });
 });
+
+describe('writeEvent logging', () => {
+  test('quiet skips the per-call log line, and the write still happens', () => {
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const res = mockRes();
+    liveSync.subscribe('quiet.html', res, { lane: 'live' });
+    liveSync.writeEvent('quiet.html', 'data', () => ({ x: 1 }), { quiet: true });
+    expect(res.count).toBe(1);
+    expect(log.mock.calls.some(([line]) => String(line).includes('Sent "data"'))).toBe(false);
+    liveSync.writeEvent('quiet.html', 'data', () => ({ x: 2 }));
+    expect(log.mock.calls.some(([line]) => String(line).includes('Sent "data"'))).toBe(true);
+    liveSync.closeChannel('quiet.html');
+    log.mockRestore();
+  });
+});

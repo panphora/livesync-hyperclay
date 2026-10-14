@@ -674,6 +674,7 @@ const liveSync = {
    *   exactly as before.
    * @param {number} [limits.maxBacklogFrames]
    * @param {number} [limits.maxBacklogBytes]
+   * @param {boolean} [limits.quiet] - skip the per-call log line, for high-rate events
    * @returns {number} connections written to
    */
   writeEvent(file, name, build, limits) {
@@ -718,7 +719,7 @@ const liveSync = {
     for (const res of slow) {
       dropSlow(file, res, name);
     }
-    console.log(`[LiveSync] Sent "${name}" to ${sent} subscriber(s) on "${file}"`);
+    if (!limits?.quiet) console.log(`[LiveSync] Sent "${name}" to ${sent} subscriber(s) on "${file}"`);
     return sent;
   },
 
