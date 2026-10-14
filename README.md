@@ -113,7 +113,7 @@ that throws leaves the channel exactly as it found it. Every close goes
 through the same removal path as `unsubscribe`, so `onRemove` fires once per
 departure.
 
-### `liveSync.writeEvent(file, name, build)`
+### `liveSync.writeEvent(file, name, build, limits?)`
 
 Write a **named** SSE event to a file channel, built per recipient. `build` is
 called once per connection as `build({ lane, meta })` and returns that
@@ -139,6 +139,13 @@ refused rather than defaulted — it must be a non-empty string with no newline.
 Nothing is added to the payload; what `build` returns is what goes on the wire.
 A connection whose write throws is dropped the same way every other write drops
 one, firing `onRemove`.
+
+Pass `limits` for a high-rate event: `{ maxBacklogFrames: 32, maxBacklogBytes: 256 * 1024 }`.
+A connection whose socket has refused more than `maxBacklogFrames` frames since it
+last drained, or holds more than `maxBacklogBytes` unsent, is dropped after the
+write: it leaves through the same path as `unsubscribe` (so `onRemove` fires once)
+and its response is destroyed, freeing what Node had buffered for it. EventSource
+reconnects on its own. Without `limits`, nothing changes.
 
 ### `liveSync.broadcast(file, { html, sender, identityMap, etag, by }, { lane } = {})`
 

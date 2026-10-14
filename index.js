@@ -162,6 +162,36 @@ function writeToAll(subscribers, message, label, { lane = 'live', file = null } 
   return sent;
 }
 
+// Frames a connection has been handed while its socket reported it was behind
+// (res.write() returned false), reset when the socket drains. Only bounded
+// writes (writeEvent with limits) read or create one.
+// Structure: WeakMap<response, { frames: number }>
+const backlogs = new WeakMap();
+
+function backlogOf(res) {
+  let backlog = backlogs.get(res);
+  if (!backlog) {
+    backlog = { frames: 0 };
+    backlogs.set(res, backlog);
+    if (typeof res.on === 'function') res.on('drain', () => { backlog.frames = 0; });
+  }
+  return backlog;
+}
+
+// A connection a bounded write found too far behind: leave the channel the
+// usual way, then destroy the response so its buffered frames are freed at once
+// instead of waiting on a socket that is not reading.
+function dropSlow(file, res, name) {
+  _remove(file, res);
+  console.log(`[LiveSync] Dropped a connection that fell behind on "${name}" for "${file}"`);
+  try {
+    if (typeof res.destroy === 'function') res.destroy();
+    else res.end();
+  } catch (e) {
+    console.log(`[LiveSync] Failed to close a slow connection on "${file}":`, e.message);
+  }
+}
+
 /**
  * LiveSync utility object
  */
@@ -637,9 +667,16 @@ const liveSync = {
    * @param {string} name - SSE event name. Non-empty, no newline.
    * @param {(info: { lane: 'live'|'saved', meta: any }) => any} build - the
    *   payload for this connection, or null/undefined to skip it entirely.
+   * @param {Object} [limits] - Opt-in backpressure. With either field set, a
+   *   connection whose socket has refused more than `maxBacklogFrames` frames
+   *   since it last drained, or holds more than `maxBacklogBytes` unsent, is
+   *   dropped after this write. Without it, every connection is written to
+   *   exactly as before.
+   * @param {number} [limits.maxBacklogFrames]
+   * @param {number} [limits.maxBacklogBytes]
    * @returns {number} connections written to
    */
-  writeEvent(file, name, build) {
+  writeEvent(file, name, build, limits) {
     if (typeof name !== 'string' || name === '' || /[\r\n]/.test(name)) {
       throw new TypeError('[LiveSync] writeEvent expects a non-empty event name with no newline');
     }
@@ -649,7 +686,11 @@ const liveSync = {
     const subscribers = clients.get(file);
     if (!subscribers?.size) return 0;
 
+    const bounded = !!limits && (limits.maxBacklogFrames !== undefined || limits.maxBacklogBytes !== undefined);
+    const maxFrames = limits?.maxBacklogFrames ?? Infinity;
+    const maxBytes = limits?.maxBacklogBytes ?? Infinity;
     const dead = [];
+    const slow = [];
     let sent = 0;
     // A snapshot, because build() is consumer code and may subscribe or remove
     // as it goes; a connection it removed is skipped rather than written to.
@@ -658,8 +699,14 @@ const liveSync = {
       const payload = build({ lane: laneOf(res), meta: subscriberMeta.get(res) });
       if (payload === null || payload === undefined) continue;
       try {
-        res.write(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`);
+        const accepted = res.write(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`);
         sent++;
+        if (bounded) {
+          const backlog = backlogOf(res);
+          if (accepted === false) backlog.frames++;
+          const unsent = typeof res.writableLength === 'number' ? res.writableLength : 0;
+          if (backlog.frames > maxFrames || unsent > maxBytes) slow.push(res);
+        }
       } catch (e) {
         console.log(`[LiveSync] Failed to write (${name} ${file}):`, e.message);
         dead.push(res);
@@ -667,6 +714,9 @@ const liveSync = {
     }
     for (const res of dead) {
       _remove(file, res);
+    }
+    for (const res of slow) {
+      dropSlow(file, res, name);
     }
     console.log(`[LiveSync] Sent "${name}" to ${sent} subscriber(s) on "${file}"`);
     return sent;

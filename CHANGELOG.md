@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `writeEvent(file, name, build, limits)` takes opt-in backpressure limits
+  (`maxBacklogFrames`, `maxBacklogBytes`) and drops a connection that falls
+  behind. Without them, nothing changes.
+
+
+
 ## [0.17.0] - 2026-09-23
 
 ### Added
